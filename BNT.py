@@ -28,7 +28,7 @@ def readData(file_name):
 
 def rotateList(l, n):
     return l[n:] + l[:n]
-def solToPaths(solutionStringList):
+def solToPaths(solutionStringList,depot=0):
     pathList=[]
     for string in solutionStringList:
         pathList.append([int(re.split("[_]",string)[1]),int(re.split("[_]",string)[2])])
@@ -64,7 +64,13 @@ def solToPaths(solutionStringList):
             curLength=len(pathList)
             if (curLength!=prevLength):
                 break
-
+    if len (pathList) == 1:
+        depotInd = 0
+        while depotInd<len(pathList[0])and pathList[0][depotInd] != depot:#needs fixing if depot is not chosen
+            depotInd += 1
+        pathList[0].pop(-1)
+        pathList[0]=rotateList(pathList[0],depotInd)
+        pathList[0].append(pathList[0][0])
     return pathList 
 
  
@@ -78,9 +84,13 @@ class Tsp():
                 jj.is_reachable(ii.interval,adj_matrix[i.name][j.name])]
         self.depot=depot
         self.ste_cuts = []
+        self.lp_time = 0.0
+        self.lp_solves = 0
     def create_model(self,var_type='C'):
         self.model = cplex.Cplex()
         model = self.model
+        model.set_results_stream(None)
+        model.set_log_stream(None)
         self.x_names = []
         #variable declaration
         for node in self.nodes:
@@ -179,30 +189,37 @@ class Tsp():
             model.linear_constraints.add(lin_expr = [cplex.SparsePair(thevars,thecoefs)], 
                                                      senses = ["G"], rhs = [2.0])
             self.names =  { n : j for j, n in enumerate(TSP.model.variables.get_names()) }
+        if var_type == 'C':
+            self.model.set_problem_type(0)
     def solve_model(self,branches=[]):
-        
+        self.lp_solves += 1
+        t0 = time.time()
         self.model.solve()
+        self.lp_time += time.time()-t0
+        self.average_lp_time = self.lp_time / self.lp_solves
         primal_feasible = self.model.solution.is_primal_feasible()
         return primal_feasible
     def add_ste_cut(self,pathList):
-        arc_list = {}
-        S=pathList[0]
-        notS = []
-        for i in range(1,len(pathList)):
-            notS += pathList[i]
-        for i in S:
-            for j in notS:
-                if self.adj_matrix[i][j] > -0.5:
-                    arc_list["y_%d_%d" % (i,j)] = 1
-                if self.adj_matrix[j][i] > -0.5:
-                     arc_list["y_%d_%d" % (j,i)] = 1
-        self.ste_cuts += [Ste_cut(arc_list,S)]
+        for k in range(len(pathList)):
+            arc_list = {}
+            S=pathList[k]
+            notS = []
+            for i in range(1,len(pathList)):
+                notS += pathList[k-i]
+            for i in S:
+                for j in notS:
+                    if self.adj_matrix[i][j] > -0.5:
+                        arc_list["y_%d_%d" % (i,j)] = 1
+                    if self.adj_matrix[j][i] > -0.5:
+                         arc_list["y_%d_%d" % (j,i)] = 1
+            self.ste_cuts += [Ste_cut(arc_list,S,notS)]
+        return len(pathList)
     def has_expansion(self,path):
         arrival_time = self.nodes[path[0]].tw_lb
         for i in range(0,len(path)-1):
             earliest_arrival = max(self.nodes[path[i+1]].tw_lb,
                                    arrival_time+self.adj_matrix[path[i]][path[i+1]])
-            print [self.nodes[path[i+1]].tw_lb,arrival_time+self.adj_matrix[path[i]][path[i+1]],earliest_arrival,self.nodes[path[i+1]].tw_ub]
+            #print [self.nodes[path[i+1]].tw_lb,arrival_time+self.adj_matrix[path[i]][path[i+1]],earliest_arrival,self.nodes[path[i+1]].tw_ub]
             if earliest_arrival-0.001 < self.nodes[path[i+1]].tw_ub:
                 arrival_time = earliest_arrival
             else:
@@ -210,9 +227,10 @@ class Tsp():
 
         return 1
 class Ste_cut():
-    def __init__(self,arc_list,S):
+    def __init__(self,arc_list,S,notS):
         self.arc_list = arc_list
         self.S = S
+        self.notS = notS
             
 class Interval_node():
     def __init__(self,name,interval,tw_lb,tw_ub):
@@ -337,13 +355,17 @@ class Arc():
 
 
 class Tree():
-    def __init__(self,tsp):
+    def __init__(self,tsp,start_control):
+        self.start_control = start_control
+        self.branch_variable_selection_time = 0.0
+        self.node_selection_time = 0.0
         self.closed_nodes = []
         self.tsp = tsp
         self.ub = 13000004.001
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         self.branch_history = {key:[] for key in tsp.y_names}
+        
     def choose_node(self,selection=1):
         if selection == 1:
             minInd = 0
@@ -372,21 +394,37 @@ class Tree():
         
 
 class Tree_node():
-    def __init__(self,tree,branches):
+    def __init__(self,tree,branches,dual_values=0,primal_values = 0,slacks = 0,red_costs = 0):
         self.tree = tree
         self.descendents = {}
         self.branches = branches
+        self.dual_values = dual_values
+        self.primal_values = primal_values
+        self.slacks = slacks
+        self.red_costs = red_costs
         self.branch_var = -1
+        
         if self.solve_lp_relaxation() and self.lower_bound < self.tree.ub:
             self.status = 1
         else:
             self.status = 0
-    def solve_lp_relaxation(self):
+    def solve_lp_relaxation(self,warm_start=1):
         tsp = self.tree.tsp
         model = tsp.model
         for branch in self.branches:
             model.linear_constraints.add(names = [branch.name],lin_expr = [branch.lin_expr],
                                          senses = [branch.sense],rhs = [branch.rhs])
+        if self.tree.start_control and warm_start and self.dual_values != 0 and self.primal_values != 0:
+            model.start.set_start(col_status=[],
+                     row_status=[],
+                     #col_primal=self.primal_values,
+
+                     row_dual=self.dual_values,
+                     col_primal=[],
+                     row_primal=[],
+                     col_dual=[],
+                     #row_dual=[]
+                     )
         self.feasible = tsp.solve_model()
         
         solution = model.solution
@@ -394,7 +432,11 @@ class Tree_node():
         self.fractionals = {}
         self.branch_val = -1
         if self.feasible:
+            self.dual_values = solution.get_dual_values()
+            self.primal_values = solution.get_values()
             self.lower_bound = solution.get_objective_value()
+            self.slacks = solution.get_linear_slacks()
+            self.red_costs = solution.get_reduced_costs()
             self.primal_x_values = dict(zip(self.tree.tsp.x_names,solution.get_values(self.tree.tsp.x_names)))
             self.primal_y_solution = dict(zip(self.tree.tsp.y_names,solution.get_values(self.tree.tsp.y_names)))
         
@@ -428,6 +470,7 @@ class Tree_node():
         return split_points
     def choose_branch_var(self):
         #return self.branch_var, self.branch_val
+        t0 = time.time()
         max_score = -100
         chosen_var = -1
         chosen_val = -1
@@ -437,6 +480,7 @@ class Tree_node():
                 max_score = score
                 chosen_var = var_name
                 chosen_val = var_val
+        self.tree.branch_variable_selection_time += time.time()-t0
         return chosen_var, chosen_val
     def calc_score(self,var_name,f_0,f_1):
         branch_history = self.tree.branch_history
@@ -474,111 +518,140 @@ class Tree_node():
                 average_0 = 1.0
             return (5.0/6)*min(f_0*average_0,f_1*average_1)+1.0/6*max(f_0*average_0,f_1*average_1)
 
-instance_name="rbg016b.tw"
+instance_name="rbg031a.tw"
 vert_num,TWs,adj_matrix,nodes = readData(instance_name)
-
-TSP = Tsp(nodes,adj_matrix,0)
-
-TSP.create_model()
-bnt_tree = Tree(TSP)
-
-TSP.solve_model()
-bnt_tree.root.is_y_integer() 
-iteras = 0
-tree_sizes=[]
-t0 = time.time()
-time_spent = 0.0
-
-while len(bnt_tree.open_nodes)>0 and iteras < 1000:
-    iteras += 1
-    t1=time.time()
-    print "selecting node"
-    node = bnt_tree.choose_node(3)
-    tree_sizes.append([len(bnt_tree.open_nodes)])
-    branch_var,branch_val = node.choose_branch_var()
-    transform = 0
-    if branch_var != -1:
-        f_1 = 1.0-branch_val
-        f_0 = branch_val
-        new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
-                         Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]
-        if new_node_list[0].feasible and new_node_list[1].feasible:
-            c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
-            c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
-            bnt_tree.branch_history[branch_var].append((c_0,c_1))
-    else:
-        new_node_list = [node]
-    firstNewNode=new_node_list[0]
-    new_ub = 0
-    for new_node1 in new_node_list:
-        if new_node1.feasible:
-            if new_node1.is_y_integer():
-                paths = solToPaths(new_node1.find_set_y_vars())
-                if len(paths) > 1:
-                    bnt_tree.open_nodes.append(node)
-                    bnt_tree.tsp.add_ste_cut(paths)
-                    transform = 1
-                    break
-                else:
-                    depotInd = 0
-                    if TSP.depot != -1:
-                        while paths[0][depotInd] != TSP.depot:#needs fixing if depot is not chosen
-                            depotInd += 1
-                        paths[0].pop(-1)
-                        paths[0]=rotateList(paths[0],depotInd)
-                        paths[0].append(paths[0][0])
-                    if bnt_tree.tsp.has_expansion(paths[0]):
-                        if bnt_tree.ub-0.0001 > new_node1.lower_bound:
+for start_type in [0,1]:
+    TSP = Tsp(nodes,adj_matrix,0)
+    
+    TSP.create_model()
+    bnt_tree = Tree(TSP,start_type)
+    progress_prints = 0
+    
+    #TSP.solve_model()
+    #bnt_tree.root.is_y_integer() 
+    iteras = 0
+    tree_sizes=[]
+    t0 = time.time()
+    time_spent = 0.0
+    ste_count = 0
+    new_ste_cut = 0
+    transform_count = 0
+    warm_start = 1
+    reopts = 0
+    while len(bnt_tree.open_nodes)>0 and time.time()-t0 < 120:
+        iteras += 1
+        transform = 0
+        new_ub = 0
+        new_ste_cuts = 0
+        t1=time.time()
+        #print "selecting node"
+        node = bnt_tree.choose_node(3)
+        tree_sizes.append([len(bnt_tree.open_nodes)])
+        branch_var,branch_val = node.choose_branch_var()
+        
+        if not node.is_y_integer():
+            f_1 = 1.0-branch_val
+            f_0 = branch_val
+            if warm_start:
+                new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)],
+                                                                    node.dual_values+[0],node.primal_values,node.slacks,node.red_costs),
+                                 Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)],
+                                                                    node.dual_values+[0],node.primal_values,node.slacks,node.red_costs)]
+            else:
+                new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
+                             Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]
+            if new_node_list[0].feasible and new_node_list[1].feasible:
+                c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
+                c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
+                bnt_tree.branch_history[branch_var].append((c_0,c_1))
+        else:
+            new_node_list = [node]
+        
+        for new_node1 in new_node_list:
+            if new_node1.feasible:
+                if new_node1.is_y_integer() and bnt_tree.ub-0.0001 > new_node1.lower_bound:
+                    paths = solToPaths(new_node1.find_set_y_vars(),TSP.depot)
+                    if progress_prints:
+                        print "Node relaxation is integer, corresponding path is:"
+                        print paths
+                    if len(paths) > 1:
+                        if progress_prints:
+                            print "Path infeasible, subtour elimination constraint added"
+                        bnt_tree.open_nodes.append(node)
+                        new_ste_cuts = bnt_tree.tsp.add_ste_cut(paths)
+                        ste_count += new_ste_cuts
+                        if progress_prints:
+                            print "%d subtour elimination constraints added" %ste_count
+                        transform = 1
+                        new_ste_cut = 1
+                        break
+                    else:
+                        if bnt_tree.tsp.has_expansion(paths[0]):
+                            if progress_prints:
+                                print "Path feasible, new incumbent found and accepted"
                             new_ub = 1
                             bnt_tree.ub = new_node1.lower_bound
+                        else:
+                            if progress_prints:
+                                print "Path infeasible, graph transformation necessary"
+                            transform = 1
+                            transform_count += 1
+                            if progress_prints:
+                                print "%d graph transformations" %transform_count
+                            sps = new_node1.find_split_points()
+                            for sp in sps:
+                                bnt_tree.tsp.nodes[sp[0]].split_node(sp[1])
+                            bnt_tree.open_nodes.append(node)
+                            break
+                else:
+                    if bnt_tree.ub-0.0001 > new_node1.lower_bound:
+                        bnt_tree.open_nodes.append(new_node1)
+        #it might be necessary to add new nodes to the tree if tree transformation does not cut them off
+        
+        if new_ub:
+            pop_indices2 = []
+            for i,node in enumerate(bnt_tree.open_nodes):
+                if not (node.feasible and node.lower_bound < bnt_tree.ub-0.0001):
+                    pop_indices2.insert(0,i)
+            for ind in pop_indices2:
+                bnt_tree.open_nodes.pop(ind)
+        time_spent+= time.time()-t1       
+        if transform:
+            pop_indices = []
+            bnt_tree.tsp.create_model()
+            if progress_prints:
+                print "New ste cuts: %d" % new_ste_cuts
+            for i,node in enumerate(bnt_tree.open_nodes):
+                if new_ste_cuts != 0:
+                    if node.feasible:
+                        node.dual_values = (node.dual_values[0:len(node.dual_values)-len(node.branches)]+
+                                            [0.0]*new_ste_cuts+node.dual_values[len(node.dual_values)-
+                                            len(node.branches):len(node.dual_values)])
+                        node.solve_lp_relaxation(1)
                     else:
-                        transform = 1
-                        sps = new_node1.find_split_points()
-                        for sp in sps:
-                            bnt_tree.tsp.nodes[sp[0]].split_node(sp[1])
-                        bnt_tree.open_nodes.append(node)
-                        break
-            else:
-                if bnt_tree.ub-0.0001 > new_node1.lower_bound:
-                    bnt_tree.open_nodes.append(new_node1)
-    #it might be necessary to add new nodes to the tree if tree transformation does not cut them off
+                        node.solve_lp_relaxation(0)
+                else:
+                    node.solve_lp_relaxation(0)
+                if not (node.feasible and node.lower_bound < bnt_tree.ub-0.0001):
+                    pop_indices.insert(0,i)
+            for ind in pop_indices:
+                bnt_tree.open_nodes.pop(ind)
+    comp_time = time.time()-t0
+    """
+    idx2name = { j : n for j, n in enumerate(TSP.model.variables.get_names()) }
+    solutionStringList = []
+    for i,val in enumerate(TSP.model.solution.get_values()):
+        if val >0.5:
+            if len(re.split("[_]",idx2name[i])) == 5:
+                solutionStringList.append(idx2name[i])
+            print(idx2name[i])
     
-    if new_ub:
-        pop_indices2 = []
-        for i,node in enumerate(bnt_tree.open_nodes):
-            if not (node.feasible and node.lower_bound < bnt_tree.ub-0.0001):
-                pop_indices2.insert(0,i)
-        for ind in pop_indices2:
-            bnt_tree.open_nodes.pop(ind)
-    time_spent+= time.time()-t1       
-    if transform:
-        pop_indices = []
-        pop_reason = []
-        bnt_tree.tsp.create_model()
-        for i,node in enumerate(bnt_tree.open_nodes):
-            node.solve_lp_relaxation()
-            if not (node.feasible and node.lower_bound < bnt_tree.ub-0.0001):
-                pop_indices.insert(0,i)
-                pop_reason.insert(0,[node.feasible,node.lower_bound - bnt_tree.ub])
-        for ind in pop_indices:
-            bnt_tree.open_nodes.pop(ind)
-comp_time =  time.time() -t0    
-"""
-idx2name = { j : n for j, n in enumerate(TSP.model.variables.get_names()) }
-solutionStringList = []
-for i,val in enumerate(TSP.model.solution.get_values()):
-    if val >0.5:
-        if len(re.split("[_]",idx2name[i])) == 5:
-            solutionStringList.append(idx2name[i])
-        print(idx2name[i])
-
-print solToPaths(solutionStringList)
-"""
-TSP.create_model('B')
-TSP.solve_model()
-print TSP.model.solution.get_objective_value()
-print bnt_tree.ub
-print "iteras: %d" % iteras
-print comp_time
-print str(tree_sizes)
-print time_spent
+    print solToPaths(solutionStringList)
+    """
+    print "Lps solved: %f" %TSP.lp_solves
+    print "Lp time: %f" %TSP.lp_time
+    print "Average lp time: %f" %TSP.average_lp_time
+    print "Objective: %f" % bnt_tree.ub
+    #print "iteras: %d" % iteras
+    #print str(tree_sizes)
+    print "Total computation time: %f" %comp_time
