@@ -612,15 +612,16 @@ pref = "n40w60"
 #n40w80.003.txt solved in 7883s no dyn disc
 #n40w80.004.txt solved in 215s no dyn disc
 #n40w80.005.txt too hard 8000
-for dynamic_discovery in [0,1]:
-    for pref in ["n%dw%d" % (z1,z2) for z1 in [20] for z2 in [20]]:
-        for instance_name in [pref+".00%d.txt"% i for i in [1]]:
+
+for pref in ["n%dw%d" % (z1,z2) for z1 in [20] for z2 in [80]]:
+    for instance_name in [pref+".00%d.txt"% i for i in [5]]:
+        for dynamic_discovery in [1]:
             #instance_name="n20w20.001.txt"
             vert_num,TWs,adj_matrix,nodes = readData(instance_name,"DUMAS")
-            dynamic_discovery = 0
+            #dynamic_discovery = 0
             time_limit = 1000
             TSP = Tsp(nodes,adj_matrix,0)
-            
+            keep_history = 0
             TSP.create_model()
             bnt_tree = Tree(TSP,1)
             progress_prints = 0
@@ -639,8 +640,6 @@ for dynamic_discovery in [0,1]:
             time_on_graph = []
             t_graph = t0
             while len(bnt_tree.open_nodes)>0 and time.time()-t0 < time_limit:
-                if transform_count > 4:
-                    dynamic_discovery = 0
                 iteras += 1
                 transform = 0
                 new_ub = 0
@@ -784,7 +783,11 @@ for dynamic_discovery in [0,1]:
                                 bnt_tree.open_nodes.pop(ind)
                         else:
                             TSP.create_model()
-                            bnt_tree = Tree(TSP,1)
+                            if keep_history:
+                                bnt_tree.open_nodes = [Tree_node(bnt_tree,[])]
+                            else:
+                                bnt_tree = Tree(TSP,1)
+                            
                             TSP.solve_model()
                             bnt_tree.root.is_y_integer()
             time_on_graph.append(time.time()-t_graph)
@@ -819,8 +822,8 @@ for dynamic_discovery in [0,1]:
             log_str += str(time_on_graph)+"\n"
             log_str +="___________________\n"
             file = open(file_name, "a")
-            TSP_data = file.write(log_str)
-            
+            #TSP_data = file.write(log_str)
+            file.close()
             print "Objective: %f" % bnt_tree.ub
             print "Lps solved: %f" %TSP.lp_solves
             print "Average lp time: %f" %TSP.average_lp_time
