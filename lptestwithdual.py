@@ -1,4 +1,6 @@
 import cplex
+import random
+import cplex
 import re
 import time
 import math
@@ -27,7 +29,6 @@ def solToPaths(solutionStringList):
         print "ERROR"
         print pathList
         print path
-        return -1
     return path
 
 
@@ -48,12 +49,6 @@ def readData(file_name,direcotry_name ="SSPInstances"):
         lineStrList = re.split(" +", lineStr)
         #print lineStrList
         adj_matrix.append([int(val) for val in lineStrList])
-    cost_matrix=[]
-    for i in range(vertNum):
-        lineStr = entries.pop(0)
-        lineStrList = re.split(" +", lineStr)
-        #print lineStrList
-        cost_matrix.append([int(val) for val in lineStrList])
     TWs=[]
     for i in range(vertNum):
         lineStr = entries.pop(0)
@@ -61,17 +56,16 @@ def readData(file_name,direcotry_name ="SSPInstances"):
         #lineStrList.pop(-1)
         TWs.append([int(val) for val in lineStrList])
     for i in range(len(TWs)):
-        TWs[i] = (TWs[i][0],int(TWs[i][1]))
+        TWs[i] = (TWs[i][0],int(TWs[i][1]*1.3))
     nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vertNum)]
-    return vertNum,TWs,adj_matrix,nodes,cost_matrix
+    return vertNum,TWs,adj_matrix,nodes
 
  
 class Graph():
-    def __init__(self,nodes,adj_matrix,cost_matrix,origin,destination):
+    def __init__(self,nodes,adj_matrix,origin,destination):
         self.nodes = [Graph_node(self,node[0],node[1],node[2]) for node in nodes]
         self.adj_matrix = adj_matrix
-        self.cost_matrix = cost_matrix
-        self.arc_list = [Arc(jj,ii,adj_matrix[i.name][j.name],cost_matrix[i.name][j.name]) 
+        self.arc_list = [Arc(jj,ii,adj_matrix[i.name][j.name]) 
             for i in self.nodes for ii in i.interval_nodes for j in self.nodes
                 for jj in j.interval_nodes if i.name!= j.name and adj_matrix[i.name][j.name] > 0.5 and 
                 jj.is_reachable(ii.interval,adj_matrix[i.name][j.name])]
@@ -95,7 +89,7 @@ class Graph():
                         for node in self.nodes 
                         for interval_node in node.interval_nodes
                         for arc in interval_node.outgoing_arcs]
-        all_obj = [self.cost_matrix[arc.tail.name][arc.head.name] 
+        all_obj = [self.adj_matrix[arc.tail.name][arc.head.name] 
                             for node in self.nodes 
                         for interval_node in node.interval_nodes
                         for arc in interval_node.outgoing_arcs
@@ -143,7 +137,7 @@ class Graph():
         self.model.parameters.lpmethod.set(2)
         self.idx2name = { j : n for j, n in enumerate(model.variables.get_names()) }
         self.name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
-        if self.dual_values != [] and self.use_start:
+        if self.dual_values != [] and self.use_start and 0:
             model.start.set_start(col_status=[],
                      row_status=[],
                      row_dual=self.dual_values,
@@ -231,7 +225,7 @@ class Graph_node():
             else:
                 if self.interval_nodes[idx+1].is_lowest_reachable(arc.tail.interval,arc.length,
                                       arc.tail.is_tw_ub()):
-                    new_arc = Arc(self.interval_nodes[idx+1],arc.tail,arc.length,arc.cost)
+                    new_arc = Arc(self.interval_nodes[idx+1],arc.tail,arc.length)
                     self.graph.arc_list.append(new_arc)
             arc_index += 1
         for i in pop_indices:
@@ -246,13 +240,13 @@ class Graph_node():
             else:
                 if arc.head.is_lowest_reachable(self.interval_nodes[idx+1].interval,
                                                 arc.length,self.interval_nodes[idx+1].is_tw_ub()):
-                    new_arc = Arc(arc.head,self.interval_nodes[idx+1],arc.length,arc.cost)
+                    new_arc = Arc(arc.head,self.interval_nodes[idx+1],arc.length)
                     self.graph.arc_list.append(new_arc)
                 else:
                     is_reachable,new_head = self.graph.nodes[arc.head.name].find_lowest_reachable(self.interval_nodes[idx+1].interval,
                                                 arc.length,self.interval_nodes[idx+1].is_tw_ub())
                     if is_reachable:
-                        new_arc = Arc(new_head,self.interval_nodes[idx+1],arc.length,arc.cost)
+                        new_arc = Arc(new_head,self.interval_nodes[idx+1],arc.length)
                         self.graph.arc_list.append(new_arc)
                     
             arc_index += 1
@@ -305,83 +299,185 @@ class Interval_node():
 
 
 class Arc():
-    def __init__(self,head,tail,length,cost):
+    def __init__(self,head,tail,length):
         self.head = head
         self.head.ingoing_arcs.append(self)
         self.tail = tail
         self.tail.outgoing_arcs.append(self)
         self.length = length
-        self.cost = cost
 
+#feasible starting basis: shortest path dualized
+#instance_name="n20w20.001.txt"
+#vert_num,TWs,adj_matrix,nodes = readData("TEST","DUMAS")
+"""
+vert_num = 100
+sqrt=math.sqrt
 
-vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("newInst3000_0")
-#500_21 is interesting
-#500_25 is interesting
-#newInst3000_2 is interesting
+adj_matrix = [[0,3,0,0,sqrt(20),0,0,sqrt(8),0,0],
+               [0,0,3,0,0,0,0,0,0,0],
+               [0,0,0,3,0,0,sqrt(13),0,0,0],
+               [0,0,0,0,0,0,0,0,0,3],
+               [0,0,sqrt(32),0,0,4,0,0,0,0],
+               [0,0,0,0,0,0,sqrt(13),0,0,0],
+               [0,0,0,2,0,0,0,0,0,sqrt(13)],
+               [0,sqrt(5),0,0,0,0,0,0,sqrt(8),0],
+               [0,0,sqrt(20),sqrt(41),0,0,0,0,0,0],
+               [0,0,0,0,0,0,0,0,0,0]
+               ]
+TWs= [[0,1000],
+      [186,800],
+      [5,190],
+      [5,190],
+      [24,190],
+      [25,190],
+      [35,190],
+      [184,190],
+      [10,190],
+    [0,1000]]
+
+for i in range(vert_num):
+    nodes.append([i,TWs[i][0],TWs[i][1]])"""
+vert_num,TWs,adj_matrix,nodes = readData("test3")
 
 #dynamic_discovery = 0
 time_limit = 500
 keep_history = 0
-GRAPH = Graph(nodes,adj_matrix,cost_matrix,0,vert_num-1)
+GRAPH = Graph(nodes,adj_matrix,0,vert_num-1)
+GRAPH.print_log = 1
+GRAPH.create_model()
 
-path_feasible = 0 
-iteras = 0
+GRAPH2 = Graph(nodes,adj_matrix,0,vert_num-1)
+GRAPH2.print_log = 1
+GRAPH2.create_model()
+model = GRAPH.model
+print "Log of initial model with infeasible route:"
+model.parameters.lpmethod.set(2)
+#model.parameters.preprocessing.presolve.set(0)
+model.set_problem_type(0)
+model.variables.add(names = ["xx_0_1","xx_1_2","xx_2_4","xx_1_4"],
+                             lb=[0]*4,obj=[2,1,120,142])
 
-lp_time = 0
-#global expand
-GRAPH.expand = 1
-GRAPH.print_log = 0
-GRAPH.use_start = 0
-if GRAPH.expand:
-    for i in range(1,len(TWs)-1):
-        for j in range(TWs[i][0]+1,TWs[i][1],1):
-            GRAPH.nodes[i].split_node(j)
-t0 = time.time()
-solve_times = []
-print "starting to solve"
-while time.time()-t0 < time_limit:
-    iteras += 1
-    GRAPH.create_model()
-    t1 = time.time()
-    GRAPH.solve_model()
-    lp_time += time.time()-t1
-    solve_times.append(time.time()-t1)
-    path = solToPaths(GRAPH.set_vars)
-    if path == -1:
-        break
-    splitList = GRAPH.split_at(path)
-    #print splitList
-    #print(path)
-    if splitList == -1:
-        break
-    else:
-        for split_node,split_point in splitList:
-            GRAPH.nodes[split_node].split_node(int(split_point))
-            insert_index = 0
-            for i in range(split_node):
-                insert_index += len(GRAPH.nodes[i].interval_nodes)
-            insert_index += GRAPH.nodes[split_node].split_index
-            GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
-            #break
-    #print "selecting node"
-    print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
+varis= [
+              ["xx_0_1","xx_1_2","xx_1_4"],
+              ["xx_1_2","xx_2_4"],
+              ]
+coefs= [
+              [1,-1,-1],
+              [1,-1],
+              ]
 
+allvars = [cplex.SparsePair([v for v in varis[j]],[coef for coef in coefs[j]]) for j in range(2)]
+model.linear_constraints.add(names = ["2","3"],lin_expr = allvars, 
+                                                     senses = ['E']*2, rhs = [0,0])
+model.linear_constraints.set_coefficients(0,"xx_0_1",-1.0)
+model.linear_constraints.set_coefficients(799,"xx_2_4",1.0)
+model.linear_constraints.set_coefficients(799,"xx_1_4",1.0)
 
-t=0
-last = 0
-if path != -1:
-    for p in path:
-        t+=adj_matrix[last][p[0]]
-        print "node : %d, TW = [%d,%d] at %d" %(p[0],TWs[p[0]][0],TWs[p[0]][1],t)
-        last=p[0]
-            
-    #print "location (%.2f,%.2f)" % 
-summe=0
-for j in GRAPH.nodes:
-    summe+=len(j.interval_nodes)
-print "Time spent on solving lps: %.2f" %lp_time
-print "Total solve time: %.2f" % (time.time()-t0) 
-print "Number of points: %d" % summe
-print "Objective : %f" %GRAPH.model.solution.get_objective_value()
-print solve_times
-print len(solve_times)
+model.solve()
+dual_values = model.solution.get_dual_values()
+deleted_dual_val1 = model.solution.get_dual_values("2")
+deleted_dual_val2 = model.solution.get_dual_values("3")
+print "Objective value: %f" %  model.solution.get_objective_value()
+print "\n\nLog of refined model created from previous model:"
+model.variables.add(names = ["xx_1_2_2"],lb=[0],ub=[1],obj=[1])
+#chosenCols = [i for i in range(1500,1510)]
+
+model.linear_constraints.delete(["2"])
+model.linear_constraints.delete(["3"])
+varis= [
+              ["xx_0_1","xx_1_4"],
+              ["xx_1_2_2"],
+              ["xx_1_2_2","xx_2_4"],
+              ]
+coefs= [[1,-1],
+              [1],
+              [1,-1],
+              ]
+
+allvars = [cplex.SparsePair([v for v in varis[j]],[coef for coef in coefs[j]]) for j in range(3)]
+model.linear_constraints.add(lin_expr = allvars, 
+                                                     senses = ['E']*3, rhs = [0,0,0])
+
+dual_values.pop(-2)
+dual_values.pop(-1)
+dual_values.append(deleted_dual_val1)
+dual_values.append(deleted_dual_val1)
+dual_values.append(deleted_dual_val2)
+#"""
+model.start.set_start(col_status=[],
+                     row_status=[],
+                     row_dual=dual_values,
+                     col_primal=[],
+                     row_primal=[],
+                     col_dual=[],
+                     #row_dual=[]
+                     )
+#"""
+model.solve()
+print "Objective value: %f" % model.solution.get_objective_value()
+print "\n\nLog of refined model created from scratch without start:"
+model2=GRAPH2.model
+#model2.parameters.preprocessing.presolve.set(0)
+model2.set_problem_type(0)
+model2.variables.add(names = ["xx_0_1","xx_1_2","xx_2_4","xx_1_2_2","xx_1_4"],
+                             lb=[0]*5,obj=[2,1,120,1,142])
+
+varis= [
+              ["xx_0_1","xx_1_4"],
+              ["xx_1_2_2"],
+              ["xx_1_2_2","xx_2_4"],
+              ]
+coefs= [[1,-1],
+              [1],
+              [1,-1],
+              ]
+allvars = [cplex.SparsePair([v for v in varis[j]],[coef for coef in coefs[j]]) for j in range(3)]
+model2.linear_constraints.add(lin_expr = allvars, 
+                                                     senses = ['E']*3, rhs = [0,0,0])
+model2.linear_constraints.set_coefficients(0,"xx_0_1",-1.0)
+model2.linear_constraints.set_coefficients(799,"xx_2_4",1.0)
+model2.linear_constraints.set_coefficients(799,"xx_1_4",1.0)
+model2.parameters.lpmethod.set(2)
+model2.start.set_start(col_status=[],
+                     row_status=[],
+                     row_dual=dual_values,
+                     col_primal=[],
+                     row_primal=[],
+                     col_dual=[],
+                     #row_dual=[]
+                     )
+model2.solve()
+print "Objective value: %f" % model2.solution.get_objective_value()
+print "\n\nLog of refined model created from scratch:"
+model2=GRAPH2.model
+#model2.parameters.preprocessing.presolve.set(0)
+model2.set_problem_type(0)
+model2.variables.add(names = ["xx_0_1","xx_1_2","xx_2_4","xx_1_2_2","xx_1_4"],
+                             lb=[0]*5,obj=[2,1,120,1,142])
+
+varis= [
+              ["xx_0_1","xx_1_4"],
+              ["xx_1_2_2"],
+              ["xx_1_2_2","xx_2_4"],
+              ]
+coefs= [[1,-1],
+              [1],
+              [1,-1],
+              ]
+allvars = [cplex.SparsePair([v for v in varis[j]],[coef for coef in coefs[j]]) for j in range(3)]
+model2.linear_constraints.add(lin_expr = allvars, 
+                                                     senses = ['E']*3, rhs = [0,0,0])
+model2.linear_constraints.set_coefficients(0,"xx_0_1",-1.0)
+model2.linear_constraints.set_coefficients(799,"xx_2_4",1.0)
+model2.linear_constraints.set_coefficients(799,"xx_1_4",1.0)
+model2.parameters.lpmethod.set(2)
+model2.start.set_start(col_status=[],
+                     row_status=[],
+                     row_dual=dual_values,
+                     col_primal=[],
+                     row_primal=[],
+                     col_dual=[],
+                     #row_dual=[]
+                     )
+model2.solve()
+print "Objective value: %f" % model2.solution.get_objective_value()
