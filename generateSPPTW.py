@@ -16,21 +16,23 @@ def writeData(file_name,TWs,distM,costM,direcotry_name ="SSPInstances"):
 
     
     file.write("%d\n"% len(TWs))
-    for i in distM:
+    for row,rowDict in distM.iteritems():
         myStr = ""
-        for c,j in enumerate(i):
-            if c != len(TWs)-1:
-                myStr += str(j)+ " "
-            else:
-                myStr += str(j)
+        for col,val in rowDict.iteritems():
+                myStr += str(col)+ " " + str(val) + " "
+        if len(myStr)>0:
+            myStr = myStr[:-1]
+        else:
+            myStr = " "
         file.write(myStr+"\n")
-    for i in costM:
+    for row,rowDict in costM.iteritems():
         myStr = ""
-        for c,j in enumerate(i):
-            if c != len(TWs)-1:
-                myStr += str(j)+ " "
-            else:
-                myStr += str(j)
+        for col,val in rowDict.iteritems():
+                myStr += str(col)+ " " + str(val) + " "
+        if len(myStr)>0:
+            myStr = myStr[:-1]
+        else:
+            myStr = " "
         file.write(myStr+"\n")
     for j in TWs:
         file.write("%d %d\n" % (j[0],j[1]))
@@ -86,7 +88,7 @@ def dist2(point1,point2):
         return 1000
     return math.sqrt((point1[0]-point2[0])*(point1[0]-point2[0])+(point1[1]-point2[1])*(point1[1]-point2[1]))
 
-def generateInstance(fileName,levels=20,gatePoints=2,pointsPerLevel=100,length = 30):
+def generateInstance(fileName,levels=30,gatePoints=2,pointsPerLevel=300,length = 30):
     TWs = []
     points = [(0,0)]
     adder = 0
@@ -129,10 +131,10 @@ def generateInstance(fileName,levels=20,gatePoints=2,pointsPerLevel=100,length =
     costMatrix = {j:{} for j,p in enumerate(points)}
     for i in range(len(points)):
         for j in successors[i]:
-            distMatrix[i][j] = int(dist(points[i],points[j]))
+            distMatrix[i][j] = 1+int(dist(points[i],points[j]))
             costMatrix[i][j] = 1+int((0.5+random.random()/2.0)*distMatrix[i][j])
+            costMatrix[i][j] = distMatrix[i][j]
     gateIndices = [p for k in range(levels) for p in range((k+1)*pointsPerLevel-gatePoints,(k+1)*pointsPerLevel)]
-    print gateIndices
     twlbadder = 0
     oldcorner=(0,0)
     for i,p in enumerate(points):
@@ -152,10 +154,8 @@ def generateInstance(fileName,levels=20,gatePoints=2,pointsPerLevel=100,length =
     return distMatrix,points,successors,costMatrix,distList,TWs
 
 sys.setrecursionlimit(1500)     
-for I in range (0,10):      
+for I in range (0,5):      
     distM,points,successors,costM,distList,TWs = generateInstance("")  
-    
-    
     processed = [0]
     toBeUpdated = [i for i in successors[0]]
     while toBeUpdated != []:
@@ -166,7 +166,6 @@ for I in range (0,10):
                     if TWs[j][0]+distM[j][i] <minAtime:
                         minAtime=TWs[j][0]+distM[j][i]
             if minAtime > TWs[i][0]:
-                print "TW of %d tightened to %d" % (i,minAtime)
                 TWs[i][0] = minAtime
                 if minAtime >= TWs[i][1]:
                     TWs[i][1] = minAtime+random.randint(10,150)
@@ -177,7 +176,7 @@ for I in range (0,10):
                 if not j in processed and not j in NewtoBeUpdated:
                     NewtoBeUpdated.append(j)
         toBeUpdated = NewtoBeUpdated
-        print "%d items processed, %d are open" % (len(processed),len(toBeUpdated))
+        #print "%d items processed, %d are open" % (len(processed),len(toBeUpdated))
            
-    TWs[-1][0]=0
-    writeData("newInst_3000_%d" % I,TWs,distM,costM,"SSPInstances")
+    #TWs[-1][0]=0
+    writeData("newInst_9000_%d" % I,TWs,distM,costM,"SSPInstances")

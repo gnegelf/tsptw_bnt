@@ -10,7 +10,7 @@ def solToPaths(solutionStringList):
            ,(int(re.split("[_]",string)[2]),int(re.split("[_]",string)[4]))])
     path = pathList.pop(0)
     count = 0
-    while len(pathList) > 0 and count < len(solutionStringList)*5:
+    while len(pathList) > 0 and count < len(solutionStringList):
         count += 1
         adder = 0
         for i in range(len(pathList)):
@@ -31,7 +31,7 @@ def solToPaths(solutionStringList):
     return path
 
 
-def readData(file_name,direcotry_name ="SSPInstances"):
+def readData(file_name,sparse=1,direcotry_name ="SSPInstances"):
     
     print "reading "+file_name
 
@@ -40,31 +40,60 @@ def readData(file_name,direcotry_name ="SSPInstances"):
     file.close()
     
     entries = re.split("\n+", graph_data)
-    
-    vertNum = int(entries.pop(0))
-    adj_matrix=[]
-    for i in range(vertNum):
-        lineStr = entries.pop(0)
-        lineStrList = re.split(" +", lineStr)
-        #print lineStrList
-        adj_matrix.append([int(val) for val in lineStrList])
-    cost_matrix=[]
-    for i in range(vertNum):
-        lineStr = entries.pop(0)
-        lineStrList = re.split(" +", lineStr)
-        #print lineStrList
-        cost_matrix.append([int(val) for val in lineStrList])
-    TWs=[]
-    for i in range(vertNum):
-        lineStr = entries.pop(0)
-        lineStrList = re.split(" +", lineStr)
-        #lineStrList.pop(-1)
-        TWs.append([int(val) for val in lineStrList])
-    for i in range(len(TWs)):
-        TWs[i] = (TWs[i][0],int(TWs[i][1]))
-    nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vertNum)]
-    return vertNum,TWs,adj_matrix,nodes,cost_matrix
-
+    if not sparse:
+        vertNum = int(entries.pop(0))
+        adj_matrix=[]
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            lineStrList = re.split(" +", lineStr)
+            #print lineStrList
+            adj_matrix.append([int(val) for val in lineStrList])
+        cost_matrix=[]
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            lineStrList = re.split(" +", lineStr)
+            #print lineStrList
+            cost_matrix.append([int(val) for val in lineStrList])
+        TWs=[]
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            lineStrList = re.split(" +", lineStr)
+            #lineStrList.pop(-1)
+            TWs.append([int(val) for val in lineStrList])
+        for i in range(len(TWs)):
+            TWs[i] = (TWs[i][0],int(TWs[i][1]))
+        nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vertNum)]
+        return vertNum,TWs,adj_matrix,nodes,cost_matrix
+    else:
+        vertNum = int(entries.pop(0))
+        adj_matrix= {j:{} for j in range(vertNum)}
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            if len(lineStr)==1:
+                continue
+            lineStrList = re.split(" +", lineStr)
+            #print lineStrList
+            for j in range(0,len(lineStrList),2):
+                adj_matrix[i][int(lineStrList[j])] = int(lineStrList[j+1])
+        cost_matrix={j:{} for j in range(vertNum)}
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            if len(lineStr)==1:
+                continue
+            lineStrList = re.split(" +", lineStr)
+            #print lineStrList
+            for j in range(0,len(lineStrList),2):
+                cost_matrix[i][int(lineStrList[j])] = int(lineStrList[j+1])
+        TWs=[]
+        for i in range(vertNum):
+            lineStr = entries.pop(0)
+            lineStrList = re.split(" +", lineStr)
+            #lineStrList.pop(-1)
+            TWs.append([int(val) for val in lineStrList])
+        for i in range(len(TWs)):
+            TWs[i] = (TWs[i][0],int(TWs[i][1]))
+        nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vertNum)]
+        return vertNum,TWs,adj_matrix,nodes,cost_matrix
  
 class Graph():
     def __init__(self,nodes,adj_matrix,cost_matrix,origin,destination):
@@ -73,7 +102,7 @@ class Graph():
         self.cost_matrix = cost_matrix
         self.arc_list = [Arc(jj,ii,adj_matrix[i.name][j.name],cost_matrix[i.name][j.name]) 
             for i in self.nodes for ii in i.interval_nodes for j in self.nodes
-                for jj in j.interval_nodes if i.name!= j.name and adj_matrix[i.name][j.name] > 0.5 and 
+                for jj in j.interval_nodes if i.name!= j.name and adj_matrix[i.name].has_key(j.name) and 
                 jj.is_reachable(ii.interval,adj_matrix[i.name][j.name])]
         self.origin = origin
         self.destination = destination
@@ -108,7 +137,7 @@ class Graph():
         allvars = []
         allrhs = []
         allsenses = []
-        
+        allnames = []
         
         for node in self.nodes:
             for interval_node in node.interval_nodes:
@@ -125,6 +154,7 @@ class Graph():
                     
                 allvars.append(cplex.SparsePair(thevars,thecoefs))
                 allsenses.append("E")
+                allnames.append("c_%d_%d" % (node.name,interval_node.interval[0]))
                 if node.name == self.origin:
                     allrhs.append(-1.0)
                 else:
@@ -141,6 +171,8 @@ class Graph():
         self.var_num = len(self.names)
         self.model.set_problem_type(0)
         self.model.parameters.lpmethod.set(2)
+        #GRAPH.model.parameters.preprocessing.reduce.set(0)
+        GRAPH.model.parameters.preprocessing.presolve.set(0)
         self.idx2name = { j : n for j, n in enumerate(model.variables.get_names()) }
         self.name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
         if self.dual_values != [] and self.use_start:
@@ -199,6 +231,7 @@ class Graph():
                     #break
         else:
             return -1
+        #splitList=[splitList[0]]
         return splitList
         return split_at,split_point
 
@@ -314,10 +347,12 @@ class Arc():
         self.cost = cost
 
 
-vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("newInst3000_0")
+vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("newInst_6000_1")
 #500_21 is interesting
 #500_25 is interesting
-#newInst3000_2 is interesting
+#newInst3000_0 is interesting
+#newInst_4500_3
+#newInst_6000_1
 
 #dynamic_discovery = 0
 time_limit = 500
@@ -331,7 +366,7 @@ lp_time = 0
 #global expand
 GRAPH.expand = 1
 GRAPH.print_log = 0
-GRAPH.use_start = 0
+GRAPH.use_start = 1
 if GRAPH.expand:
     for i in range(1,len(TWs)-1):
         for j in range(TWs[i][0]+1,TWs[i][1],1):
@@ -339,6 +374,7 @@ if GRAPH.expand:
 t0 = time.time()
 solve_times = []
 print "starting to solve"
+simplex_iteras = []
 while time.time()-t0 < time_limit:
     iteras += 1
     GRAPH.create_model()
@@ -346,6 +382,7 @@ while time.time()-t0 < time_limit:
     GRAPH.solve_model()
     lp_time += time.time()-t1
     solve_times.append(time.time()-t1)
+    simplex_iteras.append(int(GRAPH.model.solution.progress.get_num_iterations()))
     path = solToPaths(GRAPH.set_vars)
     if path == -1:
         break
@@ -364,14 +401,17 @@ while time.time()-t0 < time_limit:
             GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
             #break
     #print "selecting node"
-    print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
+    #print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
+
+
 
 
 t=0
-last = 0
+last = -1
 if path != -1:
     for p in path:
-        t+=adj_matrix[last][p[0]]
+        if last!=-1:
+            t+=adj_matrix[last][p[0]]
         print "node : %d, TW = [%d,%d] at %d" %(p[0],TWs[p[0]][0],TWs[p[0]][1],t)
         last=p[0]
             
@@ -383,5 +423,6 @@ print "Time spent on solving lps: %.2f" %lp_time
 print "Total solve time: %.2f" % (time.time()-t0) 
 print "Number of points: %d" % summe
 print "Objective : %f" %GRAPH.model.solution.get_objective_value()
-print solve_times
+#print solve_times
+print "Simplex iteras: %d, average simplex iteras: %.2f" %(int(sum(simplex_iteras)),float(sum(simplex_iteras))/len(simplex_iteras))
 print len(solve_times)
