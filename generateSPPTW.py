@@ -88,7 +88,7 @@ def dist2(point1,point2):
         return 1000
     return math.sqrt((point1[0]-point2[0])*(point1[0]-point2[0])+(point1[1]-point2[1])*(point1[1]-point2[1]))
 
-def generateInstance(fileName,levels=30,gatePoints=2,pointsPerLevel=300,length = 30):
+def generateInstance(fileName,levels=10,gatePoints=2,pointsPerLevel=100,length = 30):
     TWs = []
     points = [(0,0)]
     adder = 0
@@ -179,4 +179,4 @@ for I in range (0,5):
         #print "%d items processed, %d are open" % (len(processed),len(toBeUpdated))
            
     #TWs[-1][0]=0
-    writeData("newInst_9000_%d" % I,TWs,distM,costM,"SSPInstances")
+    writeData("newInst_1000_%d" % I,TWs,distM,costM,"SSPInstances")

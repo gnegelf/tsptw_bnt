@@ -102,7 +102,7 @@ def generateInstance(fileName,n):
     distM[n]={}
     return distM,costM,TWs
 
-n=12
+n=15
 distM,costM,TWs = generateInstance("",n)  
 
 writeData("worstCase_%d" % n,TWs,distM,costM,"SSPInstances")
