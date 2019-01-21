@@ -1,7 +1,161 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Dec  6 13:41:29 2018
+
+@author: fabiangnegel
+"""
+import sys
+import random
+import math
 import cplex
 import re
 import time
-import math
+def writeData(file_name,TWs,distM,costM,direcotry_name ="SSPInstances"):
+    
+    print "Writing "+file_name
+
+    file = open(direcotry_name+"/"+file_name, "w")
+
+    
+    file.write("%d\n"% len(TWs))
+    for row,rowDict in distM.iteritems():
+        myStr = ""
+        for col,val in rowDict.iteritems():
+                myStr += str(col)+ " " + str(val) + " "
+        if len(myStr)>0:
+            myStr = myStr[:-1]
+        else:
+            myStr = " "
+        file.write(myStr+"\n")
+    for row,rowDict in costM.iteritems():
+        myStr = ""
+        for col,val in rowDict.iteritems():
+                myStr += str(col)+ " " + str(val) + " "
+        if len(myStr)>0:
+            myStr = myStr[:-1]
+        else:
+            myStr = " "
+        file.write(myStr+"\n")
+    for j in TWs:
+        file.write("%d %d\n" % (j[0],j[1]))
+    file.close()
+
+def quickSort(alist):
+   quickSortHelper(alist,0,len(alist)-1)
+
+def quickSortHelper(alist,first,last):
+   if first<last:
+
+       splitpoint = partition(alist,first,last)
+
+       quickSortHelper(alist,first,splitpoint-1)
+       quickSortHelper(alist,splitpoint+1,last)
+
+
+def partition(alist,first,last):
+   pivotvalue = alist[first][1]
+
+   leftmark = first+1
+   rightmark = last
+
+   done = False
+   while not done:
+
+       while leftmark <= rightmark and alist[leftmark][1] <= pivotvalue:
+           leftmark = leftmark + 1
+
+       while alist[rightmark][1] >= pivotvalue and rightmark >= leftmark:
+           rightmark = rightmark -1
+
+       if rightmark < leftmark:
+           done = True
+       else:
+           temp = alist[leftmark]
+           alist[leftmark] = alist[rightmark]
+           alist[rightmark] = temp
+
+   temp = alist[first]
+   alist[first] = alist[rightmark]
+   alist[rightmark] = temp
+
+
+   return rightmark
+
+def dist(point1,point2):
+    if point1[0] > point2[0] and point1[1] > point2[1]:
+        return 1000
+    return math.sqrt((point1[0]-point2[0])*(point1[0]-point2[0])+(point1[1]-point2[1])*(point1[1]-point2[1]))
+def dist2(point1,point2):
+    if point1[0] < point2[0] and point1[1] < point2[1]:
+        return 1000
+    return math.sqrt((point1[0]-point2[0])*(point1[0]-point2[0])+(point1[1]-point2[1])*(point1[1]-point2[1]))
+
+def generateInstance(fileName,levels=2,gatePoints=2,pointsPerLevel=300,length = 30):
+    TWs = []
+    points = [(0,0)]
+    adder = 0
+    successors = []
+    
+    for k in range(levels):
+        corner1 = (k*length,k*length)
+        corner2 = ((k+1)*length,(k+1)*length)
+        
+        corner = corner2[0]
+        for i in range(pointsPerLevel-gatePoints+(adder-1)):
+            diagVal = corner1[0]+corner*random.random()
+            diagVal2=random.random()*min(20,corner-diagVal)-min(20,corner-diagVal)/2
+            points.append((diagVal+diagVal2,diagVal-diagVal2))
+        
+        for j in range(gatePoints):
+            diagVal2=random.random()*corner-corner/2
+            points.append((corner+diagVal2,corner-diagVal2))
+        distList = [[(j,dist(points[i],points[j])) for j in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel)]
+                for i in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel)]
+        distList2 = [[(j,dist2(points[i],points[j])) for j in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel)]
+                for i in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel)]
+        for l in distList:
+            quickSort(l)
+        for l in distList2:
+            quickSort(l)
+        successors +=[[] for i in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel)]
+        for j in range(pointsPerLevel*k-gatePoints*adder,(k+1)*pointsPerLevel):
+            for i in range(random.randint(4,18)):
+                if j not in range(pointsPerLevel*(k+1)-gatePoints,pointsPerLevel*(k+1)):
+                    chosenOne = distList[j-(pointsPerLevel*k-gatePoints*adder)][random.randint(1,13)][0]
+                    if chosenOne not in successors[j]:
+                        successors[j].append(chosenOne)
+                if j not in range(pointsPerLevel*k-gatePoints*adder,pointsPerLevel*k+(1-adder)):
+                    chosenOne = distList2[j-(pointsPerLevel*k-gatePoints*adder)][random.randint(gatePoints,gatePoints+8)][0]
+                    if j not in successors[chosenOne] and chosenOne != len(points)-1:
+                        successors[chosenOne].append(j)
+        adder=1
+    distMatrix = {j:{} for j,p in enumerate(points)}
+    costMatrix = {j:{} for j,p in enumerate(points)}
+    for i in range(len(points)):
+        for j in successors[i]:
+            distMatrix[i][j] = 1+int(dist(points[i],points[j]))
+            costMatrix[i][j] = 1+int((0.5+random.random()/2.0)*distMatrix[i][j])
+            #costMatrix[i][j] = distMatrix[i][j]
+    gateIndices = [p for k in range(levels) for p in range((k+1)*pointsPerLevel-gatePoints,(k+1)*pointsPerLevel)]
+    twlbadder = 0
+    oldcorner=(0,0)
+    for i,p in enumerate(points):
+        if i == 0 or i == len (points)-1:
+            TWs.append([0,15000])
+        else:
+            if i not in gateIndices:
+                TWlb=twlbadder+random.randint(0,int(dist(oldcorner,p)*1.5))+random.randint(0,length)
+                TWub=TWlb+random.randint(200,length+400)
+                TWs.append([TWlb,TWub])
+            else:
+                TWlb=int(dist((0,0),p)*1.5)+random.randint(0,30)
+                TWub=TWlb+random.randint(200,length+460)
+                TWs.append([TWlb,TWub])
+                twlbadder=int(dist((0,0),p)*1.5)
+                oldcorner=p
+    return distMatrix,points,successors,costMatrix,distList,TWs
+
 
 def solToPaths(solutionStringList):
     pathList=[]
@@ -24,9 +178,7 @@ def solToPaths(solutionStringList):
                     pathList.pop(i-adder)
                     adder+=1
     if count == len(solutionStringList)*5:
-        print "ERROR"
-        print pathList
-        print path
+        print "ERROR solution no simple path"
         return -1
     return path
 
@@ -94,7 +246,8 @@ def readData(file_name,sparse=1,direcotry_name ="SSPInstances"):
             TWs[i] = (TWs[i][0],int(TWs[i][1]))
         nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vertNum)]
         return vertNum,TWs,adj_matrix,nodes,cost_matrix
- 
+
+
 class Graph():
     def __init__(self,nodes,adj_matrix,cost_matrix,origin,destination):
         self.nodes = [Graph_node(self,node[0],node[1],node[2]) for node in nodes]
@@ -457,6 +610,7 @@ class Interval_node():
         return 0
 
 
+
 class Arc():
     def __init__(self,head,tail,length,cost):
         self.head = head
@@ -466,94 +620,124 @@ class Arc():
         self.length = length
         self.cost = cost
 
-
-vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("newInst_1000_4")
-#500_21 is interesting
-#500_25 is interesting
-#newInst3000_0 is interesting
-#newInst_4500_3
-#newInst_4200_4
-#newInst_6000_1
-
-#dynamic_discovery = 0
-time_limit = 500
-keep_history = 0
-print "creating Graph"
-GRAPH = Graph(nodes,adj_matrix,cost_matrix,0,vert_num-1)
-path_feasible = 0 
-iteras = 0
-
-lp_time = 0.0
-lp_time2 = 0.0
-#global expand
-GRAPH.expand = 1
-GRAPH.print_log = 0
-GRAPH.use_start = 1
-GRAPH.delete_start = 0
-GRAPH.adapt_model = 0
-GRAPH.lp_time = 0.0
-GRAPH.create_model()
-if GRAPH.expand:
-    for i in range(1,len(TWs)-1):
-        for j in range(TWs[i][0]+1,TWs[i][1],1):
-            GRAPH.nodes[i].split_node(j)
-    GRAPH.create_model()
-
-t0 = time.time()
-solve_times = []
-print "starting to solve"
-simplex_iteras = []
-while time.time()-t0 < time_limit:
-    iteras += 1
-    if GRAPH.adapt_model == 0 and not iteras == 1:
-        GRAPH.create_model()
+typeOfBreak = 0
+sys.setrecursionlimit(1500)     
+for I in range(0,10):
+    adj_matrix,points,successors,cost_matrix,distList,TWs = generateInstance("",
+                                levels=3,gatePoints=2,pointsPerLevel=333,length = 30)
+    processed = [0]
+    toBeUpdated = [i for i in successors[0]]
     
-
-    GRAPH.solve_model()
-
-    #solve_times.append(time.time()-t1)
-    simplex_iteras.append(int(GRAPH.model.solution.progress.get_num_iterations()))
-    path = solToPaths(GRAPH.set_vars)
-    if path == -1:
-        break
-    splitList = GRAPH.split_at(path)
-    if splitList == -1:
-        break
-    else:
-        for split_node,split_point in splitList:
-            GRAPH.nodes[split_node].split_node(int(split_point))
-            if not GRAPH.adapt_model:
-                insert_index = 0
-                for i in range(split_node):
-                    insert_index += len(GRAPH.nodes[i].interval_nodes)
-                insert_index += GRAPH.nodes[split_node].split_index
-                GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
-                #break
-    #print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
-
-
-
-
-
-t=0
-last = -1
-if path != -1:
-    for p in path:
-        if last!=-1:
-            t+=adj_matrix[last][p[0]]
-        if t < TWs[p[0]][0]:
-            t= TWs[p[0]][0]
-        #print "node : %d, TW = [%d,%d] at %d" %(p[0],TWs[p[0]][0],TWs[p[0]][1],t)
-        last=p[0]
+    while toBeUpdated != []:
+        for i in toBeUpdated:
+            minAtime=100000
+            for j in processed:
+                if i in successors[j]:
+                    if TWs[j][0]+adj_matrix[j][i] <minAtime:
+                        minAtime=TWs[j][0]+adj_matrix[j][i]
+    
+                            
+                        
+            if minAtime > TWs[i][0]:
+                TWs[i][0] = minAtime
+                if minAtime + 20 >= TWs[i][1]:
+                    TWs[i][1] = minAtime+random.randint(20,70)
+        processed += toBeUpdated
+        NewtoBeUpdated = []
+        for i in toBeUpdated:
+            for j in successors[i]:
+                if not j in processed and not j in NewtoBeUpdated:
+                    NewtoBeUpdated.append(j)
+        toBeUpdated = NewtoBeUpdated
+     
+    vert_num = len(TWs)
+    for kk in range(30):
+        nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
+        
+        
+        time_limit = 500
+        keep_history = 0
+        print "creating Graph"
+        GRAPH = Graph(nodes,adj_matrix,cost_matrix,0,vert_num-1)
+        
+        path_feasible = 0 
+        iteras = 0
+        
+        lp_time = 0.0
+        #global expand
+        GRAPH.expand = 0
+        GRAPH.print_log = 0
+        GRAPH.use_start = 1
+        GRAPH.delete_start = 0
+        GRAPH.adapt_model = 1
+        GRAPH.lp_time = 0.0
+        GRAPH.create_model()
+        
+    
+        t0 = time.time()
+        solve_times = []
+        print "starting to solve"
+        simplex_iteras = []
+        simplex_iteras2 = []
+        splitFail = 0
+        while time.time()-t0 < time_limit:
+            iteras += 1
+            if GRAPH.adapt_model == 0 or iteras == 1:
+                GRAPH.create_model()
             
-    #print "location (%.2f,%.2f)" % 
-summe=0
-for j in GRAPH.nodes:
-    summe+=len(j.interval_nodes)
-print "Time spent on solving lps without start: %.2f" % GRAPH.lp_time
-print "Total solve time: %.2f" % (time.time()-t0) 
-print "Number of points: %d" % summe
-print "Objective : %f" %GRAPH.model.solution.get_objective_value()
-#print solve_times
-print "Simplex iteras: %d, average simplex iteras: %.2f" %(int(sum(simplex_iteras)),float(sum(simplex_iteras))/len(simplex_iteras))
-print str(iteras)
+        
+            GRAPH.solve_model()
+            #solve_times.append(time.time()-t1)
+            simplex_iteras.append(int(GRAPH.model.solution.progress.get_num_iterations()))
+            path = solToPaths(GRAPH.set_vars)
+            if path == -1:
+                break
+            splitList = GRAPH.split_at(path)
+            if splitList == -1:
+                break
+            else:
+                splitFail = 0
+                for split_node,split_point in splitList:
+                    if not GRAPH.nodes[split_node].split_node(int(split_point)):
+                        splitFail = 1
+                    if not GRAPH.adapt_model:
+                        insert_index = 0
+                        for i in range(split_node):
+                            insert_index += len(GRAPH.nodes[i].interval_nodes)
+                        insert_index += GRAPH.nodes[split_node].split_index
+                        GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
+                        #break
+                if splitFail:
+                    break
+            #print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
+        if splitFail:
+            break
+        if path != -1:
+            repeat = 1
+            writeData("newInst_1000_%d" % I,TWs,adj_matrix,cost_matrix,"SSPInstances")
+            if kk > 10:
+                typeOfBreak = 1
+            if not typeOfBreak:
+                while repeat and len(path)>3:
+                    distToUb = [(i[0],TWs[i[0]][1]-i[1]) for i in path]
+                    minInd = 0
+                    mini = 1000000
+                    otherInd = 0
+                    for mm,j in enumerate(distToUb):
+                        if mini > j[1]:
+                            mini = j[1]
+                            minInd = j[0]
+                            otherInd = mm
+                    if -TWs[minInd][0]+(TWs[minInd][1]-mini-5)>1:
+                        TWs[minInd] =(TWs[minInd][0],TWs[minInd][1]-mini-1)
+                        repeat = 0
+                    else:
+                        path.pop(otherInd)
+                if len(path) < 10:
+                    typeOfBreak = 1
+                    break
+            else:
+                for qw in range(len(path)-1):
+                    cost_matrix[path[qw][0]][path[qw+1][0]] += 4
+        else:
+            break

@@ -88,7 +88,7 @@ def dist2(point1,point2):
         return 1000
     return math.sqrt((point1[0]-point2[0])*(point1[0]-point2[0])+(point1[1]-point2[1])*(point1[1]-point2[1]))
 
-def generateInstance(fileName,levels=10,gatePoints=2,pointsPerLevel=100,length = 30):
+def generateInstance(fileName,levels=2,gatePoints=2,pointsPerLevel=200,length = 30):
     TWs = []
     points = [(0,0)]
     adder = 0
@@ -154,10 +154,11 @@ def generateInstance(fileName,levels=10,gatePoints=2,pointsPerLevel=100,length =
     return distMatrix,points,successors,costMatrix,distList,TWs
 
 sys.setrecursionlimit(1500)     
-for I in range (0,5):      
+for I in range (0,1):      
     distM,points,successors,costM,distList,TWs = generateInstance("")  
     processed = [0]
     toBeUpdated = [i for i in successors[0]]
+    
     while toBeUpdated != []:
         for i in toBeUpdated:
             minAtime=100000
@@ -179,4 +180,4 @@ for I in range (0,5):
         #print "%d items processed, %d are open" % (len(processed),len(toBeUpdated))
            
     #TWs[-1][0]=0
-    writeData("newInst_1000_%d" % I,TWs,distM,costM,"SSPInstances")
+    writeData("newInst_400_%d" % I,TWs,distM,costM,"SSPInstances")
