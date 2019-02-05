@@ -223,7 +223,7 @@ class Graph():
             if val > 0.0001 and val < 0.9999:
                 print "Error fractional value detected"
 
-    def split_atOld(self,pathWithTime):
+    def split_at2(self,pathWithTime):
         path = [pat[0] for pat in pathWithTime]
         arrival_time = self.nodes[path[0]].tw_lb
         split_at = -1
@@ -291,48 +291,6 @@ class Graph():
         #splitList=[splitList[0]]
         return splitList
         return split_at,split_point
-    def split_atHybrid(self,pathWithTime):
-        path = [pat[0] for pat in pathWithTime]
-        arrival_time = self.nodes[path[0]].tw_lb
-        split_at = -1
-        for i in range(0,len(path)-1):
-            earliest_arrival = max(self.nodes[path[i+1]].tw_lb,
-                                   arrival_time+self.adj_matrix[path[i]][path[i+1]])
-            #print earliest_arrival
-            if earliest_arrival-0.0001 < self.nodes[path[i+1]].tw_ub:
-                arrival_time = earliest_arrival
-            else:
-                split_at = 1
-                break
-        
-        split_point = 0
-        if split_at != -1:
-            splitList = []
-            for ind in range(len(pathWithTime)-2):
-                tail = pathWithTime[ind][0]
-                head = pathWithTime[ind+1][0]
-                #this way of determining lbs is bad
-                lb1 = split_point
-                lb2 = float(pathWithTime[ind+1][1])
-                ub2 = self.nodes[head].tw_ub
-                if lb1+self.adj_matrix[tail][head] > lb2+0.0001 and lb1+self.adj_matrix[tail][head] < ub2+0.0001:
-                    splitList.append((head,lb1+self.adj_matrix[tail][head]))
-                    #split_at = head
-                    #split_point = lb1+self.adj_matrix[tail][head]
-                    #break
-                else:
-                    lb1 = float(pathWithTime[ind][1])
-                    if lb1+self.adj_matrix[tail][head] > lb2+0.0001:
-                        splitList.append((head,lb1+self.adj_matrix[tail][head]))
-                        #split_at = head
-                        #split_point = lb1+self.adj_matrix[tail][head]
-                        #break
-                split_point += self.adj_matrix[tail][head]
-        else:
-            return -1
-        #splitList=[splitList[0]]
-        return splitList
-        return split_at,split_point
 
 class Graph_node():
     def __init__(self,graph,name,tw_lb,tw_ub):
@@ -345,10 +303,7 @@ class Graph_node():
         idx = self.find_index(split_point)
         self.split_index = idx
         old_ub = self.interval_nodes[idx].interval[1] 
-        old_lb = self.interval_nodes[idx].interval[0]
-        if idx < len(self.interval_nodes)-1:
-            if abs(split_point - old_ub ) < 0.0001:
-                return 1
+        old_lb = self.interval_nodes[idx].interval[0] 
         if (old_lb > split_point+0.0001
                 or (split_point > old_ub+0.0001) or (abs(split_point - old_ub) < 0.0001 and abs(old_ub-self.tw_ub) > 0.0001)):
             print("Error: split point %f outside of node interval[%f,%f]" % (split_point,old_lb,old_ub) )
@@ -540,7 +495,10 @@ class Interval_node():
             if (interval[0]+step < self.interval[1]-0.0001 and (self.is_tw_lb() or interval[0]+step >= self.interval[0]-0.0001)):
                 return 1
         return 0
-
+    def __str__(self):
+        return str(self.interval)
+    def __repr__(self):
+        return str(self.interval)
 
 class Arc():
     def __init__(self,head,tail,length,cost):
@@ -567,118 +525,108 @@ def paramReader(fileName):
     return params
 
 counti= 0
-save=0
-params = paramReader("instInformation")
-config = [(0,1,0,1),(1,0,0,0),(0,0,1,1),(0,0,0,1)]
-
-for conf in config:
-    for instanceInt,fileAmount in params:
-        timeDict = {}
-        for II in range(0,fileAmount+1,1):
-            vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("n_%d_a_5_iter_%d" % (instanceInt,II),direcotry_name ="SPPTW_iterative_instances")
-            #500_21 is interesting
-            #500_25 is interesting
-            #newInst3000_0 is interesting
-            #newInst_4500_3
-            #newInst_4200_4
-            #newInst_6000_1
-            
-            #dynamic_discovery = 0
-            time_limit = 20000
-            keep_history = 0
-            
-            print "creating Graph"
-            GRAPH = Graph(nodes,adj_matrix,cost_matrix,0,vert_num-1)
-            path_feasible = 0 
-            iteras = 0
-            
-            lp_time = 0.0
-            lp_time2 = 0.0
-            #global expand
-            GRAPH.expand = conf[0]
-            GRAPH.print_log = 0
-            GRAPH.use_start = conf[1]
-            GRAPH.delete_start = conf[2]
-            GRAPH.adapt_model = conf[3]
-            GRAPH.lp_time = 0.0
+timeDict = [[],[],[]]
+for instanceInt in range(3,13):
+    
+    vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("worstCase_%d" % (instanceInt),direcotry_name ="SPPTW_worst_case_instances")
+    #500_21 is interesting
+    #500_25 is interesting
+    #newInst3000_0 is interesting
+    #newInst_4500_3
+    #newInst_4200_4
+    #newInst_6000_1
+    
+    #dynamic_discovery = 0
+    time_limit = 20000
+    keep_history = 0
+    
+    print "creating Graph"
+    GRAPH = Graph(nodes,adj_matrix,cost_matrix,0,vert_num-1)
+    path_feasible = 0 
+    iteras = 0
+    
+    lp_time = 0.0
+    lp_time2 = 0.0
+    #global expand
+    GRAPH.expand = 0
+    GRAPH.print_log = 0
+    GRAPH.use_start = 1
+    GRAPH.delete_start = 0
+    GRAPH.adapt_model = 1
+    GRAPH.lp_time = 0.0
+    GRAPH.create_model()
+    if GRAPH.expand:
+        for i in range(1,len(TWs)-1):
+            for j in range(TWs[i][0]+1,TWs[i][1]+1):
+                GRAPH.nodes[i].split_node(j)
+        GRAPH.create_model()
+    
+    t0 = time.time()
+    solve_times = []
+    print "starting to solve"
+    simplex_iteras = []
+    while time.time()-t0 < time_limit:
+        iteras += 1
+        if GRAPH.adapt_model == 0 and not iteras == 1:
             GRAPH.create_model()
-            if GRAPH.expand:
-                for i in range(1,len(TWs)-1):
-                    for j in range(TWs[i][0]+1,TWs[i][1]+1):
-                        GRAPH.nodes[i].split_node(j)
-                GRAPH.create_model()
-            
-            t0 = time.time()
-            solve_times = []
-            print "starting to solve"
-            simplex_iteras = []
-            while time.time()-t0 < time_limit:
-                iteras += 1
-                if GRAPH.adapt_model == 0 and not iteras == 1:
-                    GRAPH.create_model()
-                
-            
-                GRAPH.solve_model()
-            
-                #solve_times.append(time.time()-t1)
-                simplex_iteras.append(int(GRAPH.model.solution.progress.get_num_iterations()))
-                path = solToPaths(GRAPH.set_vars)
-                if path == -1:
-                    break
-                splitList = GRAPH.split_at(path)
-                if splitList == -1:
-                    break
-                else:
-                    for split_node,split_point in splitList:
-                        GRAPH.nodes[split_node].split_node(int(split_point))
-                        if not GRAPH.adapt_model:
-                            insert_index = 0
-                            for i in range(split_node):
-                                insert_index += len(GRAPH.nodes[i].interval_nodes)
-                            insert_index += GRAPH.nodes[split_node].split_index
-                            GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
-                            #break
-                #print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
-            
-            if time.time()-t0 > time_limit:
-                print "TIme limit reached"
-            
-            else:
-                t=0
-                """
-                last = -1
-                if path != -1:
-                    for p in path:
-                        if last!=-1:
-                            t+=adj_matrix[last][p[0]]
-                        if t < TWs[p[0]][0]:
-                            t= TWs[p[0]][0]
-                        #print "node : %d, TW = [%d,%d] at %d" %(p[0],TWs[p[0]][0],TWs[p[0]][1],t)
-                        last=p[0]
-                            
-                    #print "location (%.2f,%.2f)" % 
-                summe=0
-                for j in GRAPH.nodes:
-                    summe+=len(j.interval_nodes)
-                print "Time spent on solving lps with start: %.2f" % GRAPH.lp_time
-                print "Total solve time: %.2f" % (time.time()-t0) 
-                print "Number of points: %d" % summe
-                print "Objective : %f" %GRAPH.model.solution.get_objective_value()
-                #print solve_times
-                print "Simplex iteras: %d, average simplex iteras: %.2f" %(int(sum(simplex_iteras)),float(sum(simplex_iteras))/len(simplex_iteras))
-                print str(iteras)
-                """
-            timeDict[II] = (iteras,GRAPH.lp_time,sum(simplex_iteras))
-        print str(timeDict)
-        solTimesMat = numpy.matrix([[ timi[1] for key,timi in timeDict.iteritems()]])
-        iterasMat = numpy.matrix([[ timi[0] for key,timi in timeDict.iteritems()]])
-        simplexIterasMat = numpy.matrix([[ timi[2] for key,timi in timeDict.iteritems()]])
-        if save:
-            if conf[0]==1:
-                scipy.io.savemat('Results/times_and_iteras_expand%d' % (instanceInt), dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ])) 
-            if conf[1]==1:
-                scipy.io.savemat('Results/times_and_iteras_%d' % (instanceInt), dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ])) 
-            if conf[2]==1:
-                scipy.io.savemat('Results/times_and_iteras_delete_start%d' % (instanceInt), dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ])) 
-            if conf[1]==0 and conf[2]==0:
-                scipy.io.savemat('Results/times_and_iteras_cplex_start%d' % (instanceInt), dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ])) 
+        
+    
+        GRAPH.solve_model()
+    
+        #solve_times.append(time.time()-t1)
+        simplex_iteras.append(int(GRAPH.model.solution.progress.get_num_iterations()))
+        path = solToPaths(GRAPH.set_vars)
+        if path == -1:
+            break
+        splitList = GRAPH.split_at(path)
+        if splitList == -1:
+            break
+        else:
+            for split_node,split_point in splitList:
+                GRAPH.nodes[split_node].split_node(int(split_point))
+                if not GRAPH.adapt_model:
+                    insert_index = 0
+                    for i in range(split_node):
+                        insert_index += len(GRAPH.nodes[i].interval_nodes)
+                    insert_index += GRAPH.nodes[split_node].split_index
+                    GRAPH.dual_values.insert(insert_index,GRAPH.dual_values[insert_index])
+                    #break
+        #print "Current lower bound %.2f" %GRAPH.model.solution.get_objective_value()
+        #print path
+    
+    if time.time()-t0 > time_limit:
+        print "TIme limit reached"
+    
+    else:
+        t=0
+        """
+        last = -1
+        if path != -1:
+            for p in path:
+                if last!=-1:
+                    t+=adj_matrix[last][p[0]]
+                if t < TWs[p[0]][0]:
+                    t= TWs[p[0]][0]
+                #print "node : %d, TW = [%d,%d] at %d" %(p[0],TWs[p[0]][0],TWs[p[0]][1],t)
+                last=p[0]
+                    
+            #print "location (%.2f,%.2f)" % 
+        summe=0
+        for j in GRAPH.nodes:
+            summe+=len(j.interval_nodes)
+        print "Time spent on solving lps with start: %.2f" % GRAPH.lp_time
+        print "Total solve time: %.2f" % (time.time()-t0) 
+        print "Number of points: %d" % summe
+        print "Objective : %f" %GRAPH.model.solution.get_objective_value()
+        #print solve_times
+        print "Simplex iteras: %d, average simplex iteras: %.2f" %(int(sum(simplex_iteras)),float(sum(simplex_iteras))/len(simplex_iteras))
+        print str(iteras)
+        """
+    timeDict[0].append(iteras)
+    timeDict[1].append(GRAPH.lp_time)
+    timeDict[2].append(sum(simplex_iteras))
+
+solTimesMat = numpy.matrix([ timeDict[1] ])
+iterasMat = numpy.matrix([ timeDict[0] ])
+simplexIterasMat = numpy.matrix([ timeDict[2] ])
+scipy.io.savemat('Results/worst_case_times_and_iteras', dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ]))   

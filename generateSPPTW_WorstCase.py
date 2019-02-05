@@ -97,12 +97,12 @@ def generateInstance(fileName,n):
     costM[n-1]={n:1}
     distM = {j:{i:i-j+sum([myPow(2,k) for k in range(j,i-1)]) for i in range(j+1,n)} for j in range(0,n)}
     distM[n-1]={n:1}
-    TWs = [[0,1+i+sum([myPow(2,k) for k in range(0,i-1)])] for i in range(0,n)]+[[0,n+1]]
+    TWs = [[0,i+sum([myPow(2,k) for k in range(0,i-1)])] for i in range(0,n)]+[[0,n]]
     costM[n]={}
     distM[n]={}
     return distM,costM,TWs
 
-n=15
-distM,costM,TWs = generateInstance("",n)  
-
-writeData("worstCase_%d" % n,TWs,distM,costM,"SSPInstances")
+for n in range(3,13):
+    distM,costM,TWs = generateInstance("",n)  
+    
+    writeData("worstCase_%d" % n,TWs,distM,costM,"SPPTW_worst_case_instances")
