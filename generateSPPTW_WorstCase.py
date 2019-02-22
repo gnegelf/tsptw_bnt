@@ -102,7 +102,7 @@ def generateInstance(fileName,n):
     distM[n]={}
     return distM,costM,TWs
 
-for n in range(3,13):
+for n in range(2,16):
     distM,costM,TWs = generateInstance("",n)  
     
     writeData("worstCase_%d" % n,TWs,distM,costM,"SPPTW_worst_case_instances")

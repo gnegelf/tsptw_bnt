@@ -526,7 +526,7 @@ def paramReader(fileName):
 
 counti= 0
 timeDict = [[],[],[]]
-for instanceInt in range(3,13):
+for instanceInt in range(2,16):
     
     vert_num,TWs,adj_matrix,nodes,cost_matrix = readData("worstCase_%d" % (instanceInt),direcotry_name ="SPPTW_worst_case_instances")
     #500_21 is interesting
@@ -629,4 +629,7 @@ for instanceInt in range(3,13):
 solTimesMat = numpy.matrix([ timeDict[1] ])
 iterasMat = numpy.matrix([ timeDict[0] ])
 simplexIterasMat = numpy.matrix([ timeDict[2] ])
-scipy.io.savemat('Results/worst_case_times_and_iteras', dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ]))   
+if GRAPH.expand:
+    scipy.io.savemat('Results/worst_case_times_and_iteras_e', dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ]))   
+else:
+    scipy.io.savemat('Results/worst_case_times_and_iteras', dict([('times',solTimesMat),('iteras',iterasMat) ,('simplexIteras',simplexIterasMat) ]))   
