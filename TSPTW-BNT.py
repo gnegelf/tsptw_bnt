@@ -20,7 +20,7 @@ def readData(file_name,direcotry_name ="AFG"):
         #print lineStrList
         adj_matrix[i] = {}
         for j,val in enumerate(lineStrList):
-            if int(val)>0:
+            if i!=j:
                 adj_matrix[i][j]= int(val) 
     TWs=[]
     for i in range(vertNum):
@@ -114,6 +114,7 @@ class Tsp():
         self.depot = depot
         self.goal = goal
         self.dual_values = []
+        self.adapt_model = 1
     def create_model(self,var_type='C'):
         #t0 = time.time()
         self.model = cplex.Cplex()
@@ -127,7 +128,7 @@ class Tsp():
                         for node in self.nodes 
                         for interval_node in node.interval_nodes
                         for arc in interval_node.outgoing_arcs]
-        self.z_names = ["z_%d_%d" % (node.name,interval_node.tw_lb)for node in self.nodes for interval_node in node.interval_nodes]
+        self.z_names = ["z_%d_%d" % (node.name,interval_node.interval[0]) for node in self.nodes for interval_node in node.interval_nodes]
 
         
         
@@ -145,9 +146,8 @@ class Tsp():
         allrhs = []
         allsenses = []
         all_names = []
-        
         for node in self.nodes:
-            thevars = ["z_%d_%d" %(node.name,interval_node.tw_lb) for interval_node in node.interval_nodes]
+            thevars = ["z_%d_%d" %(node.name,interval_node.interval[0]) for interval_node in node.interval_nodes]
             thecoefs = [1]*len(thevars)
             allvars.append(cplex.SparsePair(thevars,thecoefs))
             allsenses.append("E")
@@ -159,7 +159,7 @@ class Tsp():
                 if node.name != self.goal:
                     thevars = ["y_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,
                                                    arc.tail.interval[0],arc.head.interval[0])
-                                for arc in interval_node.outgoing_arcs]+["z_%d_%d" % (node.name,interval_node.tw_lb)]
+                                for arc in interval_node.outgoing_arcs]+["z_%d_%d" % (node.name,interval_node.interval[0])]
                     
                     thecoefs = [1]*len(interval_node.outgoing_arcs)+[-1]
                     
@@ -167,11 +167,11 @@ class Tsp():
                     allvars.append(cplex.SparsePair(thevars,thecoefs))
                     allsenses.append("E")
                     allrhs.append(0.0)
-                    all_names.append("goout_%d_%d" %(node.name,interval_node.tw_lb))
+                    all_names.append("goout_%d_%d" %(node.name,interval_node.interval[0]))
                 if node.name != self.depot:
                     thevars = ["y_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,
                                                    arc.tail.interval[0],arc.head.interval[0])
-                                for arc in interval_node.ingoing_arcs]+["z_%d_%d" % (node.name,interval_node.tw_lb)]
+                                for arc in interval_node.ingoing_arcs]+["z_%d_%d" % (node.name,interval_node.interval[0])]
                     
                     thecoefs = [1]*len(interval_node.ingoing_arcs)+[-1]
     
@@ -179,7 +179,7 @@ class Tsp():
                     allvars.append(cplex.SparsePair(thevars,thecoefs))
                     allsenses.append("E")
                     allrhs.append(0.0)
-                    all_names.append("goin_%d_%d" %(node.name,interval_node.tw_lb))
+                    all_names.append("goin_%d_%d" %(node.name,interval_node.interval[0]))
         
         for i in self.nodes:
             for j in self.adj_matrix[i.name]:
@@ -195,7 +195,7 @@ class Tsp():
                     allsenses.append("E")
                     allrhs.append(0.0)
                     all_names.append("arcuse_%d_%d" %(i.name,j))
-                    
+        
         model.linear_constraints.add(names=all_names,lin_expr = allvars, 
                                                      senses = allsenses, rhs = allrhs)
         self.const_num=len(allvars)
@@ -211,6 +211,7 @@ class Tsp():
     def solve_model(self,branches=[]):
         #self.lp_solves += 1
         #t0 = time.time()
+        self.model.set_problem_type(0)
         self.model.solve()
         #self.lp_time += time.time()-t0
         #self.average_lp_time = self.lp_time / self.lp_solves
@@ -250,28 +251,42 @@ class Ste_cut():
         self.notS = notS
             
 class Interval_node():
-    def __init__(self,name,interval,tw_lb,tw_ub):
+    def __init__(self,name,interval,tw_lb,tw_ub,is_ub):
         self.name = name
         self.interval = interval
         self.tw_lb = tw_lb
         self.tw_ub = tw_ub
         self.ingoing_arcs = []
         self.outgoing_arcs = []
-    def is_reachable(self,interval,step,ub_included=0):
-        if not ub_included:
-            if (interval[0]+step < self.interval[1] and (self.is_tw_lb() or interval[1]+step > self.interval[0])):
-                return 1
+        self.is_ub = is_ub
+    def is_reachable(self,interval,step,ub_included=1):
+        if self.is_tw_ub:
+            if not ub_included:
+                if (interval[0]+step <= self.interval[1]+0.0001 and (self.is_tw_lb() or interval[1]+step > self.interval[0]+0.0001)):
+                    return 1
+            else:
+                if (interval[0]+step <= self.interval[1]+0.0001 and (self.is_tw_lb() or interval[1]+step >= self.interval[0]-0.0001)):
+                    return 1
         else:
-            if (interval[0]+step < self.interval[1] and (self.is_tw_lb() or interval[1]+step >= self.interval[0])):
-                return 1
+            if not ub_included:
+                if (interval[0]+step < self.interval[1]-0.0001 and (self.is_tw_lb() or interval[1]+step > self.interval[0]+0.0001)):
+                    return 1
+            else:
+                if (interval[0]+step < self.interval[1]-0.0001 and (self.is_tw_lb() or interval[1]+step >= self.interval[0]-0.0001)):
+                    return 1
         return 0
     def is_tw_lb(self):
         return abs(self.interval[0] - self.tw_lb)< 0.0001
     def is_tw_ub(self):
-        return abs(self.interval[1] - self.tw_ub)< 0.0001
+       # return abs(self.interval[1] - self.tw_ub)< 0.0001
+       return self.is_ub
     def is_lowest_reachable(self,interval,step,ub_included=0):
-        if (interval[0]+step < self.interval[1] and (self.is_tw_lb() or interval[0]+step >= self.interval[0])):
-            return 1
+        if self.is_tw_ub():
+            if (interval[0]+step <= self.interval[1]+0.0001 and (self.is_tw_lb() or interval[0]+step >= self.interval[0]-0.0001)):
+                return 1
+        else:
+            if (interval[0]+step < self.interval[1]-0.0001 and (self.is_tw_lb() or interval[0]+step >= self.interval[0]-0.0001)):
+                return 1
         return 0
 
 class Tsp_node():
@@ -280,9 +295,9 @@ class Tsp_node():
         self.name = name
         self.tw_lb = tw_lb
         self.tw_ub = tw_ub
-        self.interval_nodes = [Interval_node(name,[tw_lb,tw_ub],tw_lb,tw_ub)]
+        self.interval_nodes = [Interval_node(name,[tw_lb,tw_ub],tw_lb,tw_ub,1)]
         
-    def split_node(self,split_point):
+    def split_nodeOld(self,split_point):
         idx = self.find_index(split_point)
         old_ub = self.interval_nodes[idx].interval[1] 
         old_lb = self.interval_nodes[idx].interval[0] 
@@ -330,7 +345,7 @@ class Tsp_node():
             arc_index += 1
         for i in pop_indices:
             self.interval_nodes[idx].outgoing_arcs.pop(i)
-    def find_index(self,split_point):
+    def find_indexOld(self,split_point):
         if split_point < self.tw_lb:
             print ("Error: split point outside of time window (less)")
             return 0
@@ -344,12 +359,12 @@ class Tsp_node():
             if split_point > self.tw_ub:
                 print ("Error: split point outside of time window (larger)")
             return idx-1
-    def find_lowest_reachable(self,interval,step,ub_included=0):
+    def find_lowest_reachableOld(self,interval,step,ub_included=0):
         for interval_node in self.interval_nodes:
             if interval_node.is_lowest_reachable(interval,step,ub_included):
                 return 1,interval_node
         return 0,-1
-    def split_nodeWIP(self,split_point):
+    def split_node(self,split_point):
         idx = self.find_index(split_point)
         self.split_index = idx
         old_ub = self.interval_nodes[idx].interval[1] 
@@ -364,18 +379,24 @@ class Tsp_node():
         self.interval_nodes.insert(idx+1,Interval_node(self.name,[split_point,old_ub],self.tw_lb,self.tw_ub,self.interval_nodes[idx].is_ub))
         self.interval_nodes[idx].is_ub = 0
         self.interval_nodes[idx].interval[1] = split_point
+        
         #TODO: fix types
         
         #add variable for new node
-        self.tsp.model.variables.add(names=["z_%d_%d" % (self.name,int(split_point))],types=['C'],lb=[0.0],ub=[1.0],obj=[0.0])
-        #TODO korrekte syntax
-        self.tsp.model.linear_constraints.set_coefficients(["visit_%d"% self.name,"z_%d_%d" %(self.name,int(split_point)),1.0 ])
-        
-        #generate constraints for new node
-        self.tsp.model.linear_constraints.add(names=["goout_%d_%d" %(self.name,int(split_point))],
-                                                     lin_expr=[cplex.SparsePair(["z_%d_%d" % (self.name,int(split_point))],[-1.0])],senses=["E"],rhs=[0.0])
-        self.tsp.model.linear_constraints.add(names=["goin_%d_%d" %(self.name,int(split_point))],
-                                                     lin_expr=[cplex.SparsePair(["z_%d_%d" % (self.name,int(split_point))],[-1.0])],senses=["E"],rhs=[0.0])
+        if self.tsp.adapt_model:
+            self.tsp.model.variables.add(names=["z_%d_%d" % (self.name,int(split_point))],types=['C'],lb=[0.0],ub=[1.0],obj=[0.0])
+            self.tsp.var_num += 1
+            self.tsp.names["z_%d_%d" % (self.name,int(split_point))] = self.tsp.var_num -1
+            self.tsp.z_names.append("z_%d_%d" % (self.name,int(split_point)))
+            #TODO korrekte syntax
+            self.tsp.model.linear_constraints.set_coefficients([("visit_%d"% self.name,"z_%d_%d" %(self.name,int(split_point)),1.0) ])
+            
+            #generate constraints for new node
+            self.tsp.model.linear_constraints.add(names=["goout_%d_%d" %(self.name,int(split_point))],
+                                                         lin_expr=[cplex.SparsePair(["z_%d_%d" % (self.name,int(split_point))],[-1.0])],senses=["E"],rhs=[0.0])
+            self.tsp.model.linear_constraints.add(names=["goin_%d_%d" %(self.name,int(split_point))],
+                                                         lin_expr=[cplex.SparsePair(["z_%d_%d" % (self.name,int(split_point))],[-1.0])],senses=["E"],rhs=[0.0])
+            
         pop_indices = []
         arc_index = 0
         
@@ -390,26 +411,30 @@ class Tsp_node():
                     const_name = "goin_%d_%d" % (self.name,self.interval_nodes[idx].interval[0])
                     self.tsp.model.linear_constraints.set_coefficients([(const_name,old_var_name,0.0)]) 
                     new_var_name = "y_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,arc.tail.interval[0],
-                                                      self.interval_nodes[idx+1].interval[0] )  
+                                                      self.interval_nodes[idx+1].interval[0] )
+                    const_name = "goin_%d_%d" % (self.name,self.interval_nodes[idx+1].interval[0])
+                    self.tsp.model.linear_constraints.set_coefficients([(const_name,old_var_name,1.0)]) 
                     self.tsp.model.variables.set_names(old_var_name,new_var_name)
+                    
                     self.tsp.names[new_var_name] = self.tsp.names.pop(old_var_name)
-                    self.tsp.primal_values[new_var_name] = self.tsp.primal_values.pop(old_var_name)
+                    self.tsp.y_names.append(new_var_name)
+                    self.tsp.y_names.remove(old_var_name)
+                    #self.primal_values[new_var_name] = self.primal_values.pop(old_var_name)
                 pop_indices.insert(0,arc_index)
 
             else:
                 if self.interval_nodes[idx+1].is_lowest_reachable(arc.tail.interval,arc.length,
                                       arc.tail.is_tw_ub()):
                     print "I thought this was unreachable, adjust code here"
-                    new_arc = Arc(self.interval_nodes[idx+1],arc.tail,arc.length,arc.cost)
+                    new_arc = Arc(self.interval_nodes[idx+1],arc.tail,arc.length)
                     self.graph.arc_list.append(new_arc)
                     if self.graph.adapt_model:
                         new_var_name = "y_%d_%d_%d_%d" % (new_arc.tail.name, new_arc.head.name,
                                                           new_arc.tail.interval[0],new_arc.head.interval[0])
-                        new_obj = self.graph.cost_matrix[new_arc.tail.name][new_arc.head.name] 
-                        self.graph.model.variables.add(names=[new_var_name],types=['C'],obj=[new_obj],lb=[0.0],ub=[1.0])
+                        self.graph.model.variables.add(names=[new_var_name],types=['C'],obj=[0.0],lb=[0.0],ub=[1.0])
                         self.graph.var_num += 1
                         self.graph.names[new_var_name] = self.graph.var_num -1
-                        self.graph.primal_values[new_var_name] = 0
+                        #self.graph.primal_values[new_var_name] = 0
             arc_index += 1
         for i in pop_indices:
             self.interval_nodes[idx].ingoing_arcs.pop(i)
@@ -422,53 +447,61 @@ class Tsp_node():
                     old_var_name = "y_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,
                                                       self.interval_nodes[idx+1].interval[0],arc.head.interval[0])
                     const_name = "goout_%d_%d" % (self.name,self.interval_nodes[idx].interval[0])
-                    self.tsp.model.linear_constraints.set_coefficients([(const_name,old_var_name,0.0)]) 
+                    self.tsp.model.linear_constraints.set_coefficients([(const_name,old_var_name,0.0)])
+                    const_name = "goout_%d_%d" % (self.name,self.interval_nodes[idx+1].interval[0])
+                    self.tsp.model.linear_constraints.set_coefficients([(const_name,old_var_name,1.0)])
                     self.tsp.model.variables.set_names(old_var_name,new_var_name)
                     self.tsp.names[new_var_name] = self.tsp.names.pop(old_var_name)
-                    self.tsp.primal_values[new_var_name] = self.tsp.primal_values.pop(old_var_name)
+                    self.tsp.y_names.append(new_var_name)
+                    self.tsp.y_names.remove(old_var_name)
+                    #self.tsp.primal_values[new_var_name] = self.tsp.primal_values.pop(old_var_name)
                 arc.tail = self.interval_nodes[idx+1]
                 self.interval_nodes[idx+1].outgoing_arcs.append(arc)
                 pop_indices.insert(0,arc_index)
             else:
                 if arc.head.is_lowest_reachable(self.interval_nodes[idx+1].interval,
                                                 arc.length,self.interval_nodes[idx+1].is_tw_ub()):
-                    new_arc = Arc(arc.head,self.interval_nodes[idx+1],arc.length,arc.cost)
+                    new_arc = Arc(arc.head,self.interval_nodes[idx+1],arc.length)
                     self.tsp.arc_list.append(new_arc)
                     if self.tsp.adapt_model:
                         new_var_name = "y_%d_%d_%d_%d" % (new_arc.tail.name,new_arc.head.name,
                                                           new_arc.tail.interval[0],new_arc.head.interval[0])
-                        new_obj = self.tsp.cost_matrix[new_arc.tail.name][new_arc.head.name] 
-                        self.tsp.model.variables.add(names=[new_var_name],types=['C'],obj=[new_obj],lb=[0.0],ub=[1.0])
+                        self.tsp.model.variables.add(names=[new_var_name],types=['C'],obj=[0.0],lb=[0.0],ub=[1.0])
                         self.tsp.var_num += 1
                         self.tsp.names[new_var_name] = self.tsp.var_num -1
-                        self.tsp.primal_values[new_var_name] = 0
-                        const_name = "goout_%d_%d" % (new_arc.head.name,new_arc.head.interval[0])
-                        self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)])  
+                        self.tsp.y_names.append(new_var_name)
+                        #self.tsp.primal_values[new_var_name] = 0
+                        const_name = "goin_%d_%d" % (new_arc.head.name,new_arc.head.interval[0])
+                        self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)])
+                        const_name = "goout_%d_%d" % (new_arc.tail.name,new_arc.tail.interval[0])
+                        self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)]) 
                         const_name = "arcuse_%d_%d" % (new_arc.tail.name,new_arc.head.name)
                         self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)]) 
                 else:
                     is_reachable,new_head = self.tsp.nodes[arc.head.name].find_lowest_reachable(self.interval_nodes[idx+1].interval,
                                                 arc.length,self.interval_nodes[idx+1].is_tw_ub())
                     if is_reachable:
-                        new_arc = Arc(new_head,self.interval_nodes[idx+1],arc.length,arc.cost)
+                        new_arc = Arc(new_head,self.interval_nodes[idx+1],arc.length)
                         self.tsp.arc_list.append(new_arc)
                         if self.tsp.adapt_model:
                             new_var_name = "y_%d_%d_%d_%d" % (new_arc.tail.name,new_arc.head.name,
                                                               new_arc.tail.interval[0],new_arc.head.interval[0])
-                            new_obj = self.tsp.cost_matrix[new_arc.tail.name][new_arc.head.name] 
-                            self.tsp.model.variables.add(names=[new_var_name],types=['C'],obj=[new_obj],lb=[0.0],ub=[1.0])
+                            self.tsp.model.variables.add(names=[new_var_name],types=['C'],obj=[0.0],lb=[0.0],ub=[1.0])
                             self.tsp.var_num += 1
                             self.tsp.names[new_var_name] = self.tsp.var_num -1
-                            self.tsp.primal_values[new_var_name] = 0
-                            const_name = "goout_%d_%d" % (new_arc.head.name,new_arc.head.interval[0])
+                            self.tsp.y_names.append(new_var_name)
+                            #self.tsp.primal_values[new_var_name] = 0
+                            const_name = "goin_%d_%d" % (new_arc.head.name,new_arc.head.interval[0])
                             self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)])  
+                            const_name = "goout_%d_%d" % (new_arc.tail.name,new_arc.tail.interval[0])
+                            self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)])
                             const_name = "arcuse_%d_%d" % (new_arc.tail.name,new_arc.head.name)
                             self.tsp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)]) 
             arc_index += 1
         for i in pop_indices:
             self.interval_nodes[idx].outgoing_arcs.pop(i)
         #TODO: check if this is really unnecessary
-        if self.graph.adapt_model and 0:
+        if self.tsp.adapt_model and 0:
             allvars = []
             allrhs = []
             allsenses = []
@@ -508,7 +541,7 @@ class Tsp_node():
             #self.graph.dual_values.append(0)
             #self.graph.row_status[-1]= 0
             self.graph.dual_names["c_%d_%d" % (self.name,interval_node.interval[0])] = self.graph.const_num - 1
-    def find_indexWIP(self,split_point):
+    def find_index(self,split_point):
         if split_point < self.tw_lb:
             print ("Error: split point outside of time window (less)")
             return 0
@@ -522,7 +555,7 @@ class Tsp_node():
             if split_point > self.tw_ub:
                 print ("Error: split point outside of time window (larger)")
             return idx-1
-    def find_lowest_reachableWIP(self,interval,step,ub_included=0):
+    def find_lowest_reachable(self,interval,step,ub_included=0):
         for interval_node in self.interval_nodes:
             if interval_node.is_lowest_reachable(interval,step,ub_included):
                 return 1,interval_node
@@ -557,37 +590,52 @@ class Tree():
         self.total_relaxation_time = 0.0
         self.closed_nodes = []
         self.tsp = tsp
-        self.ub = 34004.1
+        self.ub = 40094.1
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         
-        self.branch_history = {key:[] for key in tsp.y_names}
+        self.branch_history = {key:[] for key in tsp.x_names}
         self.cutFinder = cutFinder(self.tsp.adj_matrix)
         
     def branch_and_split(self):
         count=0
         breaker = 1
+        oldLb=0.0
         while len(self.open_nodes)> 0 and breaker:
             node = self.choose_node()
+            if len(self.open_nodes)<10:
+                splitNodes=1
+            else:
+                splitNodes=0
+            if len(self.open_nodes)<50:
+                addCut=1
+            else:
+                addCut=0
+            print node.lower_bound
+            print "Open nodes: %d" % len(self.open_nodes)
             cutAdded = 0
             count+=1
             comp = solToComponents(node.find_set_x_vars())
+            #print comp
             if len(comp)!=len(self.tsp.nodes):
                 cutAdded = 1
                 self.tsp.add_ste_cut(comp)
             else:
-                if len(node.fractionals) > 0:
+                if len(node.fractionals) > 0 and addCut:
+                    #ms="".join("" if val<0.001 else key+" %.3f,"%val for key,val in node.primal_y_values.iteritems())
+                    #print ms
                     for i in range(1,len(self.tsp.adj_matrix)-1):
                         S = self.cutFinder.findCut(i,len(self.tsp.nodes)-1,node.primal_x_values)
                         if S!=-1:
                             print(S)
                             cutAdded = 1
                             self.tsp.add_ste_cut(S)
-                            break     
-            if count > 306:
+                            break
+            if count > 10006:
                 print "count exceeded"
                 break
             if cutAdded:
+                print "adding cut"
                 pop_indices=[]
                 self.open_nodes.append(node)
                 for i,node2 in enumerate(self.open_nodes):
@@ -598,23 +646,94 @@ class Tree():
                     self.open_nodes.pop(pop_indices.pop(-1))
                 continue
             else:
-                print find_times(len(self.tsp.nodes),node.primal_x_values,node.primal_y_values,self.tsp.adj_matrix)
-                print(solToPaths(node.find_set_x_vars()))
-                print(count)
-                #print(node.fractionals)
-                print "No cut found in iteration"
-                break
-            """
-            if timesfeasible:
-                if xfeasible:
-                    updatebound
-                    #prune nodes with new upper bound
+                #break
+                #print node.primal_z_values
+                #print node.primal_x_values
+                #print solToPaths(node.find_set_x_vars())
+                times,split_points= find_times(len(self.tsp.nodes),node.primal_x_values,node.primal_y_values,self.tsp.adj_matrix)
+                split = 0
+                times.pop(-1)
+                #print times
+                newLb=node.lower_bound
+                if len(node.fractionals)==0 or (splitNodes and abs(oldLb-newLb)>0.001):
+                    for i,t in enumerate(times):
+                        if t> self.tsp.nodes[i].tw_ub:
+                            split = 1
+                            break
+                    if split ==1:
+                        for i,t in enumerate(times):
+                            if split_points[i][0]>0:
+                                self.tsp.nodes[i].split_node(split_points[i][0])
+                                
+                    
+                    #print split_points
+                    #print(solToPaths(node.find_set_x_vars()))
+                    #print(count)
+                    #print(node.fractionals)
+                    #print split
+                    
+                    if split == 0:
+                        oldLb = node.lower_bound
+                        timefeasible=1
+                    else:
+                        oldLb = node.lower_bound
+                        print "Splitting nodes"
+                        pop_indices=[]
+                        self.open_nodes.append(node)
+                        for i,node2 in enumerate(self.open_nodes):
+                            node2.solve_lp_relaxation()
+                            if not node2.feasible or node2.lower_bound >= self.ub:
+                                pop_indices.append(i)
+                        while (len(pop_indices)>0):
+                            self.open_nodes.pop(pop_indices.pop(-1))
+                        continue
                 else:
-                    node.branch()
+                    oldLb = node.lower_bound
+                    split=0
+                    timefeasible=0
+            if split==0:
+                if len(node.fractionals) == 0 and timefeasible:
+                    #updatebound
+                    print "integer feasible solution found, objective: %f" %node.lower_bound
+                    self.ub = node.lower_bound
+                    self.solution=node.primal_x_values
+                    self.y_solution=node.primal_y_values
+                    self.sol_arr_times=times
+                    self.y_fracs=node.y_fractionals
+                    self.split_points=split_points
+                    pop_indices=[]
+                    for i,node2 in enumerate(self.open_nodes):
+                        #node2.solve_lp_relaxation()
+                        if not node2.feasible or node2.lower_bound >= self.ub:
+                            pop_indices.append(i)
+                    while (len(pop_indices)>0):
+                        self.open_nodes.pop(pop_indices.pop(-1))
+                    continue
+                else:
+                    branch_var,branch_val = node.choose_branch_var()
+                    print "branching"
+                    f_1 = 1.0-branch_val
+                    f_0 = branch_val
+                    new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
+                                     Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]
+                    if new_node_list[0].feasible and new_node_list[1].feasible:
+                        convex_factor = 0.1
+                        c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
+                        c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
+                        frac_1 = -1.0*(len(new_node_list[1].fractionals)-len(node.fractionals))/f_1
+                        frac_0 = -1.0*(len(new_node_list[0].fractionals)-len(node.fractionals))/f_0
+                        if frac_1 < 0.0 or frac_0 < 0.0:
+                            convex_factor = 1.0
+                        c_1 = convex_factor * c_1+(1-convex_factor)* frac_1
+                        c_0 = convex_factor * c_0+(1-convex_factor)* frac_0
+                        self.branch_history[branch_var].append((c_0,c_1))
+                for new_node1 in new_node_list:
+                    if new_node1.feasible:
+                        if new_node1.lower_bound < self.ub-0.5:
+                            self.open_nodes.append(new_node1)
             else:
                 continue
-            """
-            
+            #"""    
     def choose_node(self,selection=1):
         t0=time.time()
         if selection == 1:
@@ -680,6 +799,7 @@ class Tree_node():
                      col_dual=[],
                      #row_dual=[]
                      )
+        
         self.feasible = tsp.solve_model()
         #t0 = time.time()
         solution = model.solution
@@ -694,8 +814,9 @@ class Tree_node():
             #self.slacks = solution.get_linear_slacks()
             #self.red_costs = solution.get_reduced_costs()
             #t0 = time.time()
-            self.primal_x_values = {name:self.primal_values[self.tree.tsp.name2idx[name]] for name in self.tree.tsp.x_names}
-            self.primal_y_values = {name:self.primal_values[self.tree.tsp.name2idx[name]] for name in self.tree.tsp.y_names}
+            self.primal_x_values = {name:self.primal_values[self.tree.tsp.names[name]] for name in self.tree.tsp.x_names}
+            self.primal_y_values = {name:self.primal_values[self.tree.tsp.names[name]] for name in self.tree.tsp.y_names}
+            self.primal_z_values = {name:self.primal_values[self.tree.tsp.names[name]] for name in self.tree.tsp.z_names}
             #self.primal_x_values = dict(zip(self.tree.tsp.x_names,solution.get_values(self.tree.tsp.x_names)))
             #self.primal_y_solution = dict(zip(self.tree.tsp.y_names,solution.get_values(self.tree.tsp.y_names)))
             
@@ -712,7 +833,7 @@ class Tree_node():
         model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
         #self.tree.total_relaxation_time += time.time() - t0
         return self.feasible
-    def is_y_integer(self):
+    def is_x_integer(self):
         if len(self.fractionals.values()) == 0:
             return 1
         else:
@@ -734,7 +855,7 @@ class Tree_node():
         return split_points
     def choose_branch_var(self):
         #return self.branch_var, self.branch_val
-        t0 = time.time()
+        #t0 = time.time()
         max_score = -100
         chosen_var = -1
         chosen_val = -1
@@ -744,7 +865,7 @@ class Tree_node():
                 max_score = score
                 chosen_var = var_name
                 chosen_val = var_val
-        self.tree.branch_variable_selection_time += time.time()-t0
+        #self.tree.branch_variable_selection_time += time.time()-t0
         return chosen_var, chosen_val
     def calc_score(self,var_name,f_0,f_1):
         branch_history = self.tree.branch_history
@@ -858,22 +979,31 @@ def find_times(n,x_frac,y_frac,adj_matrix):
         for i in range(n):
             if j in adj_matrix[i]:
                 A[j,i] -= x_frac["x_%d_%d" %(i,j)]
-    
+    split_points={i:(-1,0) for i in range(n)}
     for key,val in y_frac.iteritems():
         i,j,lb_1,lb_2=(int(re.split("[_]",key)[1]),int(re.split("[_]",key)[2]),int(re.split("[_]",key)[3]),int(re.split("[_]",key)[4]))
-        if lb_2-lb_1>adj_matrix[i][j]:
-            b[j] += (lb_2-lb_1)*val
-        else:
-            b[j] += adj_matrix[i][j]*val
-    #print A.tolist()[0]
-    #print b.tolist()[0]
+        if val>0.0001:
+            if lb_2-lb_1>adj_matrix[i][j]:
+                b[j] += (lb_2-lb_1)*val
+            else:
+                b[j] += adj_matrix[i][j]*val
+                arrTime = lb_1+adj_matrix[i][j]
+                score=(lb_1+adj_matrix[i][j]-lb_2)*val
+                if score > split_points[j][1]:
+                    split_points[j] = (arrTime,score)
+            
+    #print A.tolist()[-1]
+    #print b.tolist()[-1]
     times = numpy.linalg.solve(A,b)
     times = times.tolist()
-    return times
+    return times,split_points
         
                     
-instance_name = "n40w60.001.txt"
-vert_num,TWs,adj_matrix = readData(instance_name,"Dumas")
+#instance_name = "n40w60.001.txt"
+instance_name = "rbg048a.tw"
+vert_num,TWs,adj_matrix = readData(instance_name,"AFG")
+#instance_name = "testCase7_1"
+#vert_num,TWs,adj_matrix = readData(instance_name,"TSPInstances")
 vert_num += 1
 TWs.append(TWs[0])
 adj_matrix[vert_num-1] = {}
@@ -889,6 +1019,16 @@ for i in  range(vert_num):
             if TWs[i][0]+adj_matrix[i][j]>TWs[j][1]:
                 adj_matrix[i].pop(j)
 tsp = Tsp(nodes,adj_matrix,adj_matrix,0,vert_num-1)
+
+"""
+tsp.adapt_model = 0
+for i in range(1,len(TWs)):
+    for j in range(TWs[i][0]+1,TWs[i][1]+1,1):
+        tsp.nodes[i].split_node(j)
+#"""
 tsp.create_model()
 tree = Tree(tsp,0)
+t0=time.time()
 tree.branch_and_split()
+t1=time.time()
+print "Total time: %f" %(t1-t0)
