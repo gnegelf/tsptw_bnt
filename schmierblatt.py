@@ -187,25 +187,53 @@ class Tsp():
         self.model.solve()
         primal_feasible = self.model.solution.is_primal_feasible()
         return primal_feasible
-    def add_ste_cut(self,S):
+    def add_ste_cut(self,notS):
         in_arc_list = []
         out_arc_list = []
-        notS = []
-        #old_inds=self.const_num
+        S = []
         for i in range(0,len(self.nodes)):
-            if i not in S:
-                notS.append(i)
+            if i not in notS:
+                S.append(i)
+        sigma = self.sigmaOfS(S)
+        pi = self.piOfS(S)
+        #pi=[]
+        #sigma=[]
+        #print S
+        #print pi
+        #print sigma
+        #old_inds=self.const_num
+        
         for i in S:
             for j in notS:
-                if self.adj_matrix[i].has_key(j):
-                    out_arc_list.append("x_%d_%d" % (i,j))
-                if self.adj_matrix[j].has_key(i):
-                    in_arc_list.append("x_%d_%d" % (j,i))
+                if (i not in pi and j not in pi) or 0 in S or self.n-1 in S :
+                    if self.adj_matrix[i].has_key(j):
+                        out_arc_list.append("x_%d_%d" % (i,j))
+                if (i not in sigma and j not in sigma) or 0 in S or self.n-1 in S:
+                    if self.adj_matrix[j].has_key(i):
+                        in_arc_list.append("x_%d_%d" % (j,i))
         self.model.linear_constraints.add(lin_expr=[cplex.SparsePair(in_arc_list,[1.0]*len(in_arc_list))],senses=['G'],rhs=[1.0])
         self.model.linear_constraints.add(lin_expr=[cplex.SparsePair(out_arc_list,[1.0]*len(out_arc_list))],senses=['G'],rhs=[1.0])
         self.const_num += 2
         #self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
-
+    def piOfS(self,S):
+        pi=[]
+        for i in self.indices:
+            if i not in pi:
+                for j in self.precendence_graph[i].keys():
+                    if j in S:
+                        pi.append(i)
+                        break
+        return pi
+    def sigmaOfS(self,S):
+        sigma=[]
+        for j in self.indices:
+            if j not in sigma:
+                for i in S:
+                    if j in self.precendence_graph[i]:
+                        sigma.append(j)
+                        break
+        return sigma
+            
 
 #class for arcs between interval nodes adding itself to the respective in- and outgoing lists
 #and also to the arc dictionary of the tsp class
@@ -683,7 +711,7 @@ class Tree():
             cutAdded = 0
             splitNodes = 0
             node = self.choose_node()
-            if len(self.open_nodes)>1:
+            if len(self.open_nodes)>4:
                 addCutForNonInteger = 0
             #if abs(oldLb-node.lower_bound)<0.1:
             #    splitNodesForNonInteger = 0
@@ -803,9 +831,21 @@ class Tree():
                         if new_node1.lower_bound < self.ub-0.0001:
                             self.open_nodes.append(new_node1)
             
-     
-def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs):
+def pathPossible(P,TWs,old_adj_matrix):
+    #print P
+    sp=TWs[P[0]][0]
+    for i in range(len(P)-1):
+        ep=TWs[P[i+1]][1]
+        if sp+old_adj_matrix[P[i]][P[i+1]]>ep:
+            return 0
+        else:
+            sp=max(TWs[P[i+1]][0],sp+old_adj_matrix[P[i]][P[i+1]])
+    return 1
+        
+  
+def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,deep_check=0):
     changed=1
+    deep_check_status=0
     while changed:
         changed=0
         for i in  range(vert_num):
@@ -814,86 +854,179 @@ def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs):
                     if TWs[i][0]+adj_matrix[i][j]>TWs[j][1]+0.0001:
                         changed=1
                         adj_matrix[i].pop(j)
-    for i in adj_matrix:
-        if len(adj_matrix[i])==1:
-            k=adj_matrix[i].keys()[0]
-            for j in adj_matrix:
-                if j!=i:
-                    if adj_matrix[j].has_key(k):
-                        adj_matrix[j].pop(k)
+        for i in adj_matrix:
+            if len(adj_matrix[i])==1:
+                k=adj_matrix[i].keys()[0]
+                for j in adj_matrix:
+                    if j!=i:
+                        if adj_matrix[j].has_key(k):
+                            adj_matrix[j].pop(k)
+                            changed=1
+        for i in adj_matrix:
+            if len(adj_matrix_tr[i])==1:
+                k=adj_matrix_tr[i].keys()[0]
+                for j in adj_matrix[k].keys():
+                    if i!=j:
+                        adj_matrix[k].pop(j)
                         changed=1
+        
+        if (not changed) and deep_check:
+            print "Doing deep check"
+            arcsToBeDeleted=[]
+            for k in adj_matrix:
+                #if k==0:
+                #    continue
+                for l in adj_matrix[k]:
+                    deletekl=0
+                    for i in adj_matrix:
+                        for j in adj_matrix:
+                            if (i not in [j,k,l]) and (j not in [i,k,l]):
+                                logical1=0
+                                if old_adj_matrix[i].has_key(j) and old_adj_matrix[j].has_key(k):
+                                    logical1=logical1 or pathPossible([i,j,k,l],TWs,old_adj_matrix)
+                                if old_adj_matrix[j].has_key(i) and old_adj_matrix[i].has_key(k):
+                                    logical1=logical1 or pathPossible([j,i,k,l],TWs,old_adj_matrix)
+                                if  old_adj_matrix[l].has_key(i) and old_adj_matrix[i].has_key(j) :
+                                    logical1=logical1 or pathPossible([k,l,i,j],TWs,old_adj_matrix)
+                                if  old_adj_matrix[l].has_key(j) and old_adj_matrix[j].has_key(i) :
+                                    logical1=logical1 or pathPossible([k,l,j,i],TWs,old_adj_matrix)
+                                if  old_adj_matrix[i].has_key(k) and old_adj_matrix[l].has_key(j) :
+                                    logical1=logical1 or pathPossible([i,k,l,j],TWs,old_adj_matrix)
+                                if  old_adj_matrix[j].has_key(k) and old_adj_matrix[l].has_key(i) :
+                                    logical1=logical1 or pathPossible([j,k,l,i],TWs,old_adj_matrix)  
+                                if not logical1:
+                                    deletekl=1
+                                    arcsToBeDeleted.append((k,l))
+                                    #print "Popping arc:(%d,%d) because of (%d,%d)" %(k,l,i,j)  
+                                    break
+                        if deletekl:
+                            break
+            for (k,l) in arcsToBeDeleted:
+                changed=1
+                adj_matrix[k].pop(l)
+                deep_check_status=1
+        if changed:
+            adj_matrix_tr.update({i:{} for i in adj_matrix})
+            for i in adj_matrix:
+                for j in adj_matrix[i]:
+                    adj_matrix_tr[j][i]=adj_matrix[i][j]
+    return deep_check_status
+
+def build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix):
+    precedence_graph={i:{} for i in adj_matrix}
+    precedence_graph[0]={j:-1 for j in old_adj_matrix[0]}
     for i in adj_matrix:
-        if len(adj_matrix_tr[i])==1:
-            k=adj_matrix_tr[i].keys()[0]
-            for j in adj_matrix[k].keys():
-                if i!=j:
-                    adj_matrix[k].pop(j)
-                    changed=1
-                    
+        for j in adj_matrix:
+            if old_adj_matrix[j].has_key(i):
+                if TWs[j][0]+old_adj_matrix[j][i]>0.0001+TWs[i][1]:
+                    precedence_graph[i][j]=-1
+    for i in adj_matrix:
+        if i!=len(adj_matrix)-1:
+            if not precedence_graph[i].has_key(len(adj_matrix)-1):
+                precedence_graph[i][len(adj_matrix)-1]=-1
+    for i in precedence_graph:
+        for j in precedence_graph[i]:
+            for k in precedence_graph[j]:
+                if adj_matrix[i].has_key(k):
+                    adj_matrix[i].pop(k)
     adj_matrix_tr.update({i:{} for i in adj_matrix})
     for i in adj_matrix:
         for j in adj_matrix[i]:
             adj_matrix_tr[j][i]=adj_matrix[i][j]
-
-instance_name = "n40w80.001.txt"
+    return precedence_graph
+            
+def adjust_TWs(adj_matrix,adj_matrix_tr,TWs): 
+    TWs_changed=1
+    while TWs_changed:
+        TWs_changed=0
+        for  k in adj_matrix_tr:
+            if len(adj_matrix_tr[k])>0:
+                minList=[TWs[i][0]+adj_matrix[i][k] for i in adj_matrix_tr[k]]
+                if min(minList)>TWs[k][0]:
+                    #print "Increasing tw of %d, which was %d to %d" % (k,TWs[k][0],min(minList))
+                    TWs[k][0]=min(minList)
+                    TWs_changed=1
+    
+        for  k in adj_matrix:
+            if len(adj_matrix[k])>0 :
+                minList=[TWs[j][0]-adj_matrix[k][j] for j in adj_matrix[k]]+[TWs[k][1]]
+                if min(minList)>TWs[k][0]:
+                    TWs[k][0]=min(minList)
+                    #print "Increasing tw of %d, which was %d to %d" % (k,TWs[k][0],min(minList))
+                    TWs_changed=1
+    
+        for k in adj_matrix_tr:
+            if len(adj_matrix_tr[k])>0:
+                maxList=[TWs[i][1]+adj_matrix[i][k] for i in adj_matrix_tr[k]]+[TWs[k][0]]
+                if max(maxList)<TWs[k][1]:
+                    #print "Decreasing tw ub of %d, which was %d to %d" % (k,TWs[k][1],max(maxList))
+                    TWs[k][1]=max(maxList)
+                    TWs_changed=1
+    
+        for k in adj_matrix:
+            if len(adj_matrix[k])>0:
+                maxList=[TWs[j][1]-adj_matrix[k][j] for j in adj_matrix[k]]
+                if max(maxList)<TWs[k][1]:
+                    #print "Decreasing tw ub of %d, which was %d to %d" % (k,TWs[k][1],max(maxList))
+                    TWs[k][1]=max(maxList)
+                    TWs_changed=1
+        if TWs_changed:
+            maxi=0
+            for i,tw in enumerate(TWs):
+                if adj_matrix[i].has_key(vert_num-1):
+                    if tw[0]+adj_matrix[i][vert_num-1]>maxi:
+                        maxi=tw[0]+adj_matrix[i][vert_num-1]
+            TWs[-1][0]=maxi
+            process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+        else:
+            retval=process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,1)
+            if retval:
+                TWs_changed=1
+        
+#"""
+#instance_name = "n200w20.001.txt"
 #vert_num,TWs,adj_matrix = readData(instance_name,"Dumas")
-instance_name = "rbg019c.tw"
+instance_name = "rbg034a.tw"
 vert_num,TWs,adj_matrix = readData(instance_name,"AFG")
+
 vert_num += 1
 TWs.append([TWs[0][0],TWs[0][1]])
+TWs[0][1]=0
+#TWs.append([TWs[0][0],TWs[0][1]])
 processed = [0]
 toBeUpdated = [i for i in adj_matrix[0]]
 adj_matrix[vert_num-1] = {}
+old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
 nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
 for i in  range(vert_num):
     if adj_matrix[i].has_key(0):
         adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
     if adj_matrix[i].has_key(i):
         adj_matrix[i].pop(i)
+old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
 adj_matrix_tr={i:{} for i in adj_matrix}
 for i in adj_matrix:
     for j in adj_matrix[i]:
         adj_matrix_tr[j][i]=adj_matrix[i][j]
-process_adj_matrix(adj_matrix,adj_matrix_tr,TWs)
+
+sumi=0
+for i in adj_matrix:
+    sumi+=len(adj_matrix[i])
+print(sumi)
+process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
 TWs_changed=1
+
+adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
+
+g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+sumi=0
+for i in adj_matrix:
+    sumi+=len(adj_matrix[i])
+print(sumi)
 #blub-8
-while TWs_changed:
-    TWs_changed=0
-    for  k in adj_matrix_tr:
-        if len(adj_matrix_tr[k])>0:
-            minList=[TWs[i][0]+adj_matrix[i][k] for i in adj_matrix_tr[k]]
-            if min(minList)>TWs[k][0]:
-                print "Increasing tw of %d, which was %d to %d" % (k,TWs[k][0],min(minList))
-                TWs[k][0]=min(minList)
-                TWs_changed=1
-
-    for  k in adj_matrix:
-        if len(adj_matrix[k])>0 :
-            minList=[TWs[j][0]-adj_matrix[k][j] for j in adj_matrix[k]]+[TWs[k][1]]
-            if min(minList)>TWs[k][0]:
-                TWs[k][0]=min(minList)
-                print "Increasing tw of %d, which was %d to %d" % (k,TWs[k][0],min(minList))
-                TWs_changed=1
-
-    for k in adj_matrix_tr:
-        if len(adj_matrix_tr[k])>0:
-            maxList=[TWs[i][1]+adj_matrix[i][k] for i in adj_matrix_tr[k]]+[TWs[k][0]]
-            if max(maxList)<TWs[k][1]:
-                print "Decreasing tw ub of %d, which was %d to %d" % (k,TWs[k][1],max(maxList))
-                TWs[k][1]=max(maxList)
-                TWs_changed=1
-
-    for k in adj_matrix:
-        if len(adj_matrix[k])>0:
-            maxList=[TWs[j][1]-adj_matrix[k][j] for j in adj_matrix[k]]
-            if max(maxList)<TWs[k][1]:
-                print "Decreasing tw ub of %d, which was %d to %d" % (k,TWs[k][1],max(maxList))
-                TWs[k][1]=max(maxList)
-                TWs_changed=1
-    
-    process_adj_matrix(adj_matrix,adj_matrix_tr,TWs)
-    time.sleep(0.5)
+#"""
 tsp = Tsp(nodes,adj_matrix,adj_matrix,0,vert_num-1)
+tsp.precendence_graph=g
 tsp.update_duals=1
 tsp.create_model()
 tree = Tree(tsp,0)
