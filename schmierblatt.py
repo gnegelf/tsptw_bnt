@@ -86,6 +86,9 @@ class Tsp():
         model = self.model
         model.set_results_stream(None)
         model.set_log_stream(None)
+        model.parameters.advance.set(1)
+        #TODO: Find out why warning gets triggered
+        model.set_warning_stream(None)
         x_names = ["x_%d_%d" %(i,j) for i in self.indices for j in self.adj_matrix[i]]
         x_obj = [self.cost_matrix[i][j] for i in self.indices for j in self.adj_matrix[i]]
         y_names = ["y_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,
@@ -287,7 +290,7 @@ class Tsp_node():
             self.tsp.add_constraints(names,lin_expr,["E","E"],[0.0,0.0])
             if self.tsp.update_duals:
                 dual_value_locations += [self.tsp.const_name2idx["goout_%d_%d"%(self.name,self.interval_nodes[idx].id)],
-                                         self.tsp.const_name2idx["goin_%d_%d"%(self.name,self.interval_nodes[idx].id)]                                                                     ]
+                                         self.tsp.const_name2idx["goin_%d_%d"%(self.name,self.interval_nodes[idx].id)]]
 
         pop_indices = []
         arc_index = 0
@@ -331,11 +334,13 @@ class Tsp_node():
                     for k in range(1,self.tsp.n-1):
                         #print k
                         if k != arc.tail.name and k!=arc.head.name:
-                            if ((arc.head.name == self.tsp.n-1 or self.interval_nodes[idx+1].interval[0]+arc.length+self.tsp.old_adj_matrix[arc.head.name][k]>TWs[k][1])
-                                and (arc.tail.name == 0 or TWs[k][0]+self.tsp.old_adj_matrix[k][arc.tail.name]+arc.length>TWs[arc.head.name][1])):
+                            if ((arc.head.name == self.tsp.n-1 or self.interval_nodes[idx+1].interval[0]+arc.length+
+                                 self.tsp.old_adj_matrix[arc.head.name][k]>TWs[k][1])
+                                and (arc.tail.name == 0 or TWs[k][0]+self.tsp.old_adj_matrix[k][arc.tail.name]
+                                +arc.length>TWs[arc.head.name][1])):
                                 all_nodes_reachable = 0
                                 #time.sleep(1)
-                                print("Checking precedences does something, no arc added")
+                                #print("")
                                 break
                     if (not self.tsp.check_interval_precedences or all_nodes_reachable) or 1:
                         new_arc = Arc(arc.head,self.interval_nodes[idx+1],arc.length,arc.cost)
@@ -360,11 +365,13 @@ class Tsp_node():
                         all_nodes_reachable=1
                         for k in range(1,self.tsp.n-1):
                             if k != arc.tail.name and k!=arc.head.name:
-                                if ((arc.head.name== self.tsp.n-1 or self.interval_nodes[idx+1].interval[0]+arc.length+self.tsp.old_adj_matrix[arc.head.name][k]>TWs[k][1])
-                                    and (arc.tail.name==0 or TWs[k][0]+self.tsp.old_adj_matrix[k][arc.tail.name]+arc.length>TWs[arc.head.name][1])):
+                                if ((arc.head.name== self.tsp.n-1 or self.interval_nodes[idx+1].interval[0]+arc.length+
+                                     self.tsp.old_adj_matrix[arc.head.name][k]>TWs[k][1])
+                                    and (arc.tail.name==0 or TWs[k][0]+self.tsp.old_adj_matrix[k][arc.tail.name]+
+                                         arc.length>TWs[arc.head.name][1])):
                                     all_nodes_reachable = 0
                                     #time.sleep(10)
-                                    print("Checking precedences does something, no arc added")
+                                    #print("Checking precedences does something, no arc added")
                                     break
                         if (not self.tsp.check_interval_precedences or all_nodes_reachable) or 1:
                             new_arc = Arc(new_head,self.interval_nodes[idx+1],arc.length,arc.cost)
@@ -463,6 +470,7 @@ class Tree_node():
         model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,
                                          senses = self.branch_senses,rhs = self.branch_rhs)
         if self.tree.tsp.update_duals and self.dual_values_model != 0:
+            t_start0 = time.time()
             model.parameters.advance.set(1)
             model.start.set_start(col_status=[],
                      row_status=[],
@@ -474,6 +482,7 @@ class Tree_node():
                      col_dual=[],
                      #row_dual=[]
                      )
+            self.tree.add_start_time += time.time() - t_start0
         model.parameters.preprocessing.presolve.set(0)
         t0 = time.time()
         #print "start"
@@ -495,6 +504,7 @@ class Tree_node():
             model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
             return 0
         else:
+            t_sol_eval0=time.time()
             solution = model.solution
             dual_values = solution.get_dual_values()
             self.dual_values_model = dual_values[:self.tree.tsp.const_num]
@@ -513,6 +523,7 @@ class Tree_node():
             for key,val in self.primal_y_values.iteritems():
                 if abs(0.5-val)<0.5-tol:
                     self.y_fractionals[key] = val
+            self.tree.sol_eval_time += time.time() - t_sol_eval0
         model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
         #self.tree.total_relaxation_time += time.time() - t0
         return 1
@@ -599,6 +610,7 @@ class cutFinder():
         self.model=model
         model.set_results_stream(None)
         model.set_log_stream(None)
+        model.set_warning_stream(None)
         model.objective.set_sense(model.objective.sense.maximize)
         for i in adj_matrix:
             for j in adj_matrix[i]:
@@ -667,6 +679,8 @@ def find_times(tree_node,tol=0.0001):
 
 class Tree():
     def __init__(self,tsp,start_control):
+        self.print_interval = 25
+        #self.print_switch = 0
         self.psi_avg = 0
         self.lp_times=[]
         self.lp_no_dual_times=[]
@@ -676,15 +690,24 @@ class Tree():
         self.branch_variable_selection_time = 0.0
         self.node_selection_time = 0.0
         self.total_relaxation_time = 0.0
+        self.find_ste_time = 0.0
+        self.add_cut_time = 0.0
+        self.split_time = 0.0
+        self.find_split_time = 0.0
+        self.sol_eval_time = 0.0
+        self.add_start_time = 0.0
         self.closed_nodes = []
         self.tsp = tsp
-        self.ub = 29054
+        self.ub = 94020
+        self.lb = 0.0
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         self.branch_history = {key:[] for key in tsp.x_names}
         self.time_limit = 100000
         self.cutFinder = cutFinder(self.tsp)
-        
+    def conditional_print(self,string):
+        if self.count % self.print_interval == 0:
+            print string
     def choose_node(self,selection=1):
         t0=time.time()
         if selection == 1:
@@ -696,24 +719,20 @@ class Tree():
                 if node.lower_bound < minVal:
                     minInd = i
                     minVal = node.lower_bound
-        if selection == 0:
-            minInd = 0
-        if selection == 2:
-            minInd = 0
-            minVal= 100000000
-            for i,node in enumerate(self.open_nodes):
-                if (len(node.fractionals)==0):
-                    return self.open_nodes.pop(i)
-                if len(node.fractionals)+node.lower_bound < minVal:
-                    minInd = i
-                    minVal = len(node.fractionals)+node.lower_bound
+            self.lb=minVal
         if selection == 3:
             minInd = 0
             minVal= 100000000
+            minLb = 100000000
             for i,node in enumerate(self.open_nodes):
-                if len(node.fractionals)+0.1*node.lower_bound < minVal:
+                fac=0.5
+                
+                if len(node.fractionals)+fac*node.lower_bound < minVal:
                     minInd = i
-                    minVal = len(node.fractionals)+0.1*node.lower_bound
+                    minVal = len(node.fractionals)+fac*node.lower_bound
+                if node.lower_bound < minLb:
+                    minLb = node.lower_bound
+            self.lb = minLb
         self.node_selection_time += time.time() - t0
         return self.open_nodes.pop(minInd)
     def branch_and_split(self):
@@ -727,15 +746,19 @@ class Tree():
             cutAdded = 0
             splitNodes = 0
             node = self.choose_node()
-            if len(self.open_nodes)>4:
+            if self.count>50:
                 addCutForNonInteger = 0
             #if abs(oldLb-node.lower_bound)<0.1:
             #    splitNodesForNonInteger = 0
             #if abs(oldLb-node.lower_bound)>5:
             #    splitNodesForNonInteger = 0
             oldLb=node.lower_bound
-            print node.lower_bound
+            self.conditional_print("Current lower bound: %f" % self.lb)
+            self.conditional_print("Current best upper Bound: %f" % self.ub)
+            self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
+            t_ste_0 = time.time()
             S = solToComponents(node.primal_x_values)
+            self.find_ste_time +=time.time()-t_ste_0
             #Segment to add STE Cuts, if a cut is added loop is continued
             if len(S) != self.tsp.n:
                 print "Adding STE cut for set: " + str(S)
@@ -743,14 +766,18 @@ class Tree():
                 self.tsp.add_ste_cut(S)
             else:
                 if len(node.fractionals)>0 and addCutForNonInteger:
+                    t_ste_0 = time.time()
                     for i in range(1,len(self.tsp.adj_matrix)-1):
                         S = self.cutFinder.findCut(i,len(self.tsp.nodes)-1,node.primal_x_values)
                         if S!=-1:
                             print "Adding STE cut for set: " + str(S)
                             cutAdded = 1
                             self.tsp.add_ste_cut(S)
+                            self.find_ste_time +=time.time()-t_ste_0
                             break
+                    self.find_ste_time +=time.time()-t_ste_0
             if cutAdded:
+                t_add_cut0 = time.time()
                 pop_indices=[]
                 self.open_nodes.append(node)
                 for i,node2 in enumerate(self.open_nodes):
@@ -761,17 +788,22 @@ class Tree():
                         pop_indices.append(i)
                 while (len(pop_indices)>0):
                     self.open_nodes.pop(pop_indices.pop(-1))
+                self.add_cut_time += time.time() - t_add_cut0 
                 continue
             
             #Segment to split nodes, if nodes are split loop is continued
             
             if len(node.fractionals)==0 or splitNodesForNonInteger:
+                t_find_split0 = time.time()
                 times,split_points= find_times(node)
                 for i,t in enumerate(times):
                     if t> self.tsp.nodes[i].tw_ub+0.0001:
                         splitNodes = 1
+                        self.find_split_time += time.time() - t_find_split0
                         break
+                self.find_split_time += time.time() - t_find_split0
             if splitNodes:
+                t_split0 = time.time()
                 print "Splitting nodes"
                 #print split_points
                 actually_split=0
@@ -800,6 +832,7 @@ class Tree():
                 while (len(pop_indices)>0):
                     self.open_nodes.pop(pop_indices.pop(-1))
                 #time.sleep(20)
+                self.split_time += time.time()-t_split0
                 continue
             
             #segment if no cut was added and nodes were not split
@@ -817,7 +850,7 @@ class Tree():
             else:
                 #branching step
                 branch_var,branch_val = node.choose_branch_var()
-                print "branching"
+                #print "branching"
                 f_1 = 1.0-branch_val
                 f_0 = branch_val
                 if self.tsp.update_duals:
@@ -848,7 +881,6 @@ class Tree():
     def dynamic_discovery(self,split_limit=10000):
         t0=time.time()
         self.count=0
-        #splitNodesForNonInteger = 1
         timefeasible=0
         splits=0
         addCutForNonInteger = 1
@@ -861,27 +893,30 @@ class Tree():
                 node = self.choose_node()
                 if len(self.open_nodes)>4:
                     addCutForNonInteger = 0
-                #if abs(oldLb-node.lower_bound)<0.1:
-                #    splitNodesForNonInteger = 0
-                #if abs(oldLb-node.lower_bound)>5:
-                #    splitNodesForNonInteger = 0
-                print node.lower_bound
+                self.conditional_print("Current lower bound: %f" % self.lb)
+                self.conditional_print("Current best upper Bound: %f" % self.ub)
+                self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
+                t_find_cut0 = time.time()
                 S = solToComponents(node.primal_x_values)
-                #Segment to add STE Cuts, if a cut is added loop is continued
+                self.find_ste_time += time.time() - t_find_cut0
                 if len(S) != self.tsp.n:
                     print "Adding STE cut for set: " + str(S)
                     cutAdded = 1
                     self.tsp.add_ste_cut(S)
                 else:
                     if len(node.fractionals)>0 and addCutForNonInteger:
+                        t_find_cut0 = time.time()
                         for i in range(1,len(self.tsp.adj_matrix)-1):
                             S = self.cutFinder.findCut(i,len(self.tsp.nodes)-1,node.primal_x_values)
                             if S!=-1:
                                 print "Adding STE cut for set: " + str(S)
                                 cutAdded = 1
                                 self.tsp.add_ste_cut(S)
+                                self.find_ste_time += time.time() - t_find_cut0
                                 break
+                        self.find_ste_time += time.time() - t_find_cut0
                 if cutAdded:
+                    t_cut_0 = time.time()
                     pop_indices=[]
                     self.open_nodes.append(node)
                     for i,node2 in enumerate(self.open_nodes):
@@ -892,13 +927,14 @@ class Tree():
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
                         self.open_nodes.pop(pop_indices.pop(-1))
+                    self.add_cut_time += time.time()-t_cut_0
                     continue
                 
                 
                 
-                #segment if no cut was added and nodes were not split
+                #segment if no cut was added
                 if len(node.fractionals) == 0:
-                    print "Integer feasible solution found, objective: %f" %node.lower_bound
+                    print "Integer feasible tour without cycle found, objective: %f" %node.lower_bound
                     self.ub = node.lower_bound
                     self.solution_node=node
                     pop_indices=[]
@@ -911,7 +947,7 @@ class Tree():
                 else:
                     #branching step
                     branch_var,branch_val = node.choose_branch_var()
-                    print "branching"
+                    #print "branching"
                     f_1 = 1.0-branch_val
                     f_0 = branch_val
                     if self.tsp.update_duals:
@@ -923,7 +959,7 @@ class Tree():
                                                                             node.dual_values_branches+[0.0])]
                     else:
                         new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
-                                         Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]  
+                                         Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]
                     if new_node_list[0].feasible:
                         c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
                     else:
@@ -939,14 +975,19 @@ class Tree():
                             if new_node1.lower_bound < self.ub-0.0001:
                                 self.open_nodes.append(new_node1)
             #time.sleep(1)
-            timefeasible=1
+            timefeasible = 1
+            t_split0 = time.time()
+            t_find_split0 = time.time()
             times,split_points= find_times(self.solution_node)
             for i,t in enumerate(times):
                 if t> self.tsp.nodes[i].tw_ub+0.0001:
                     self.ub=100000
                     timefeasible = 0
+                    self.find_split_time += time.time() - t_find_split0
                     break
+            self.find_split_time += time.time() - t_find_split0
             if not timefeasible:
+                #t_split0 = time.time()
                 splits+=1
                 print "Splitting nodes"
                 #print split_points
@@ -955,6 +996,8 @@ class Tree():
                         self.tsp.nodes[i].split_node(split_points[i][0])
                 self.root = Tree_node(self,[])
                 self.open_nodes = [self.root]
+            self.split_time += time.time()-t_split0
+                
             
 def pathPossible(P,TWs,old_adj_matrix):
     #print P
@@ -1118,11 +1161,12 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
             retval=process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,1)
             if retval:
                 TWs_changed=1
-        
+
+  
 #"""
-#instance_name = "n20w20.001.txt"
+#instance_name = "n40w40.001.txt"
 #vert_num,TWs,adj_matrix = readData(instance_name,"Dumas")
-instance_name = "rbg027a.tw"
+instance_name = "rbg019d.tw"
 vert_num,TWs,adj_matrix = readData(instance_name,"AFG")
 #print adj_matrix[28][1]
 vert_num += 1
@@ -1145,22 +1189,26 @@ for i in adj_matrix:
     for j in adj_matrix[i]:
         adj_matrix_tr[j][i]=adj_matrix[i][j]
 
-sumi=0
-for i in adj_matrix:
-    sumi+=len(adj_matrix[i])
-print(sumi)
+oldArcAmount=0
+for i in old_adj_matrix:
+    oldArcAmount+=len(old_adj_matrix[i])
+print "Total number of arcs before preprocessing: %d" % oldArcAmount
 process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
 TWs_changed=1
 
 adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
 
 g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-sumi=0
+processedArcAmount=0
 for i in adj_matrix:
-    sumi+=len(adj_matrix[i])
-print(sumi)
+    processedArcAmount+=len(adj_matrix[i])
+print "Total number of arcs after preprocessing: %d" % processedArcAmount
+#time.sleep(3)
+print "Starting branch and bound process"
+time.sleep(3)
 #blub-8
 #"""
+
 tsp = Tsp(nodes,adj_matrix,adj_matrix,0,vert_num-1)
 tsp.precedence_graph=g
 tsp.old_adj_matrix=old_adj_matrix
@@ -1168,14 +1216,18 @@ tsp.update_duals=1
 tsp.create_model()
 tree = Tree(tsp,0)
 t0=time.time()
-#blub-8
-#tree.dynamic_discovery(10)
-print "Finished dynamic discovery starting branch_and_split"
-#time.sleep(5)
+
+#tree.dynamic_discovery(8)
+#print "Finished dynamic discovery starting branch_and_split"
+
 tree.branch_and_split()
 t1=time.time()
-print "Total time: %f" %(t1-t0)
+print ("___________________________________________________________\n")
+print "\n\nTotal time: %f\n\n" %(t1-t0)
 print "Average lp time: %f" %(sum(tree.lp_times)/len(tree.lp_times))
-#print "Average no dual lp time: %f" %(sum(tree.lp_no_dual_times)/len(tree.lp_no_dual_times))
-print "Average simp iteras: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
-#print "Average simp iteras no dual : %f" %(sum(tree.simp_nd_iteras)/len(tree.simp_nd_iteras))
+print "Total lp time (includes part of the time of adding cuts/splitting): %f" % sum(tree.lp_times)
+print "Average simplex iterations: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
+print "Total number of nodes visited: %d" % tree.count
+print "Node selection time: %f" % tree.node_selection_time
+print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
+print "Time spend on splitting nodes: %f" % tree.split_time
