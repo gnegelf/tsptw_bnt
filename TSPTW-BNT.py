@@ -638,6 +638,8 @@ class Tsp_node():
         
         old_ub = self.interval_nodes[idx].interval[1] 
         if idx == -1:
+            if not hasattr(self.tsp,'tree') or self.tsp.tree.add_all_split_points:
+                return 0
             print split_point
             print self.name
             print ("Error: split point %f already used in node %d's intervals " % (split_point,self.name) )
@@ -1063,7 +1065,7 @@ class Tree():
         self.closed_nodes = []
         self.tsp = tsp
         self.tsp.tree = self
-        self.ub = 9389
+        self.ub = 93890
         self.lb = 0.0
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
@@ -1106,11 +1108,30 @@ class Tree():
         splitNodesForNonInteger = 1
         addCutForNonInteger = 1
         oldLb=0
+        root_relaxation = 1
+        initial_check = 1
         while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
             self.count += 1
             cutAdded = 0
             splitNodes = 0
-            node = self.choose_node()
+            node = self.choose_node(3)
+            if len(self.open_nodes)>0 and initial_check:
+                if hasattr(self,'tsp_ub'):
+                    if self.tsp_ub.solve_model():
+                        print "Heuristic found integer solution with value: %.2f" % tsp_ub.model.solution.get_objective_value()
+                        self.ub = tsp_ub.model.solution.get_objective_value()
+                        for i,node2 in enumerate(self.open_nodes):
+                            pop_indices = []
+                            if node2.lower_bound >= self.ub-0.99:
+                                pop_indices.append(i)
+                            while (len(pop_indices)>0):
+                                self.open_nodes.pop(pop_indices.pop(-1))
+                            initial_check = 0
+                            continue
+                    else:
+                        initial_check = 0
+                            
+                root_relaxation = 0
             if self.count>50:
                 addCutForNonInteger = 0
             #if abs(oldLb-node.lower_bound)<0.1:
@@ -1118,7 +1139,7 @@ class Tree():
             #if abs(oldLb-node.lower_bound)>5:
             #    splitNodesForNonInteger = 0
             #oldLb=node.lower_bound
-            if self.count % 5 and splitNodesForNonInteger and self.count > 100:
+            if self.count % 5 and splitNodesForNonInteger and self.count > 50:
                 if abs(self.lb-oldLb)<0.1:
                     splitNodesForNonInteger = 0
                 oldLb=self.lb
@@ -1185,9 +1206,9 @@ class Tree():
                 else:
                     for i,t in split_points:
                         self.tsp.nodes[i].split_node(t)
-                        if hasattr(self,'tsp_ub'):
+                        if hasattr(self,'tsp_ub') :
                             self.tsp_ub.nodes[i].split_node_ub(t)
-                if hasattr(self,'tsp_ub'):
+                if hasattr(self,'tsp_ub')and (not root_relaxation or len(node.fractionals)==0):
                     if self.tsp_ub.solve_model():
                         print "Heuristic found integer solution with value: %.2f" % tsp_ub.model.solution.get_objective_value()
                         self.ub = tsp_ub.model.solution.get_objective_value()
@@ -1219,7 +1240,7 @@ class Tree():
                 pop_indices=[]
                 #pruning of tree
                 for i,node2 in enumerate(self.open_nodes):
-                    if not node2.feasible or node2.lower_bound >= self.ub:
+                    if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                         pop_indices.append(i)
                 while (len(pop_indices)>0):
                     self.open_nodes.pop(pop_indices.pop(-1))
@@ -1252,7 +1273,7 @@ class Tree():
                 #time.sleep(10)
                 for new_node1 in new_node_list:
                     if new_node1.feasible:
-                        if new_node1.lower_bound < self.ub-0.0001:
+                        if new_node1.lower_bound < self.ub-0.99:
                             self.open_nodes.append(new_node1)
     def dynamic_discovery(self,split_limit=10000):
         t0=time.time()
@@ -1542,7 +1563,7 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
 #"""
 #instance_name = "n40w40.001.txt"
 #vert_num,TWs,adj_matrix = readData(instance_name,"Dumas")
-instance_name = "rbg033a.tw"
+instance_name = "rbg027a.tw"
 vert_num,TWs,adj_matrix = readData(instance_name,"AFG")
 #print adj_matrix[28][1]
 vert_num += 1
