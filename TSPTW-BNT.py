@@ -1829,7 +1829,30 @@ if dynamic_discovery:
     saveFileName = "Results_dyn_disc"
 else:
     saveFileName = "Results_BNT"
-instance_names = ["rbg031a.tw","rbg027a.tw"]
+instance_names_full = [
+"rbg010a.tw",	"rbg020a.tw",	"rbg027a.tw",	"rbg048a.tw",	"rbg132.2.tw",
+"rbg016a.tw",	"rbg021.2.tw",	"rbg031a.tw",	"rbg049a.tw",	"rbg132.tw",
+"rbg016b.tw",	"rbg021.3.tw",	"rbg033a.tw",	"rbg050a.tw",	"rbg152.3.tw",
+"rbg017.2.tw",	"rbg021.4.tw",	"rbg034a.tw",	"rbg050b.tw",	"rbg152.tw",
+"rbg017.tw",	"rbg021.5.tw",	"rbg035a.2.tw",	"rbg050c.tw",	"rbg172a.tw",
+"rbg017a.tw",	"rbg021.6.tw",	"rbg035a.tw",	"rbg055a.tw",	"rbg193.2.tw",
+"rbg019a.tw",	"rbg021.7.tw",	"rbg038a.tw",	"rbg067a.tw",	"rbg193.tw",
+"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw	rbg086a.tw",	"rbg201a.tw",
+"rbg019c.tw",	"rbg021.9.tw",	"rbg041a.tw",	"rbg092a.tw",	"rbg233.2.tw",
+"rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",	"rbg125a.tw",	"rbg233.tw"
+]
+instance_names = [
+"rbg010a.tw",	"rbg020a.tw",	"rbg027a.tw",	
+"rbg016a.tw",	"rbg021.2.tw",	"rbg031a.tw",	
+"rbg016b.tw",	"rbg021.3.tw",	"rbg033a.tw",	
+"rbg017.2.tw",	"rbg021.4.tw",	"rbg034a.tw",	
+"rbg017.tw",	"rbg021.5.tw",	"rbg035a.2.tw",
+"rbg017a.tw",	"rbg021.6.tw",	"rbg035a.tw",	
+"rbg019a.tw",	"rbg021.7.tw",	"rbg038a.tw",
+"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw",	
+"rbg019c.tw",	"rbg021.9.tw",	"rbg041a.tw",	
+"rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",
+]
 file = open(saveFileName, "w")
 file.write("{")
 file.close()
