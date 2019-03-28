@@ -2,12 +2,13 @@ import cplex
 import re
 import numpy
 import time
+import sys
 def solToComponents(solutionStringList,depot=0):
     arcList=[]
     for string in solutionStringList:
         arcList.append([int(re.split("[_]",string)[1]),int(re.split("[_]",string)[2])])
     #notS = range(1,n)
-    S=[0]
+    S=[depot]
     while len(arcList)>0:
         popIndices=[]
         for i in range(len(arcList)):
@@ -21,11 +22,11 @@ def solToComponents(solutionStringList,depot=0):
             arcList.pop(popIndices.pop(-1))
     return S
 
-def readData(file_name,direcotry_name ="AFG"):
+def readData(file_name,directory_name ="AFG"):
     
     print "reading "+file_name
 
-    file = open(direcotry_name+"/"+file_name, "r")
+    file = open(directory_name+"/"+file_name, "r")
     TSP_data = file.read()
     file.close()
     
@@ -47,14 +48,24 @@ def readData(file_name,direcotry_name ="AFG"):
         lineStrList = re.split(" +", lineStr)
         lineStrList.pop(-1)
         TWs.append([int(val) for val in lineStrList])
-    return vertNum,TWs,adj_matrix
+    lineStr = entries.pop(0)
+    lineStrList = re.split(" +", lineStr)
+    if directory_name == "AFG":
+        service_time = int(lineStrList.pop(-1))
+    else:
+        service_time = 0
+    
+    return vertNum,TWs,adj_matrix,service_time
 
 class Tsp():
     def __init__(self,TWs,adj_matrix,cost_matrix,depot,goal):
+        self.savedQ = {}
+        self.savedZ = {}
         self.update_duals=1
         self.depot = depot
         self.goal = goal
         self.check_interval_precedences = 1
+        self.TWs = TWs
         self.n=len(TWs)
         self.indices=range(self.n)
         self.nodes = [Tsp_node(self,i,TWs[i][0],TWs[i][1]) for i in self.indices]
@@ -220,6 +231,8 @@ class Tsp():
         self.const_num += 2
         #self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
     def piOfS(self,S):
+        if S==[]:
+            return []
         pi=[]
         for i in self.indices:
             if i not in pi:
@@ -229,6 +242,8 @@ class Tsp():
                         break
         return pi
     def sigmaOfS(self,S):
+        if S==[]:
+            return []
         sigma=[]
         for j in self.indices:
             if j not in sigma:
@@ -237,6 +252,49 @@ class Tsp():
                         sigma.append(j)
                         break
         return sigma
+    def calcW(self,X,Y):
+        return self.piOfS(X)+self.sigmaOfS(Y)+self.calcZ(X,Y)
+    def calcZ(self,X,Y,tol=0.000001):
+        if not self.savedZ.has_key((X[0],Y[0])):#TODO: This only works for 1 element sets
+            self.savedZ[X[0],Y[0]] = []
+            for i in X:
+                for j in Y:
+                    for k in self.adj_matrix[i]:
+                        if k!=i and k!=j:
+                            if self.adj_matrix[k].has_key(j) and self.TWs[i][0]+self.adj_matrix[i][k]+self.adj_matrix[k][j]>self.TWs[j][1]+tol:
+                                self.savedZ[X[0],Y[0]].append(k)
+        return self.savedZ[X[0],Y[0]]
+    def calcQ(self,X,Y,tol=0.000001):
+        if not self.savedQ.has_key((X[0],Y[0])):#TODO: This only works for 1 element sets
+            self.savedQ[X[0],Y[0]] = []
+            for i in X:
+                for j in Y:
+                    for u in self.adj_matrix[i]:
+                        for v in self.adj_matrix_tr[j]:
+                            if u!=j and v!=i and self.old_adj_matrix[u].has_key(v):
+                                #print (i,u,v,j)
+                                if not pathPossible([i,u,v,j],self.TWs,self.old_adj_matrix):
+                                        self.savedQ[X[0],Y[0]].append((u,v))
+        return self.savedQ[X[0],Y[0]]
+    def add_pi_sigma_cut(self,X,Y,S):
+        arc_list = []
+        notS = []
+        for i in range(0,len(self.nodes)):
+            if i not in S:
+                notS.append(i)
+        W = self.calcW(X,Y)
+        Q = self.calcQ(X,Y)
+        for i in S:
+            if i not in W:
+                for j in self.adj_matrix[i]:
+                    if (j not in W):
+                        if j in notS and (not (i,j) in Q):
+                            arc_list.append("x_%d_%d" % (i,j))
+        #print arc_list                   
+        self.model.linear_constraints.add(lin_expr=[cplex.SparsePair(arc_list,[1.0]*len(arc_list))],senses=['G'],rhs=[1.0])
+        self.const_num += 1
+        #self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
+                        
             
 #Class for a primal heuristic that checks on the overestimated graph
 class Tsp_ub():
@@ -260,7 +318,8 @@ class Tsp_ub():
                         adj_matrix[i][j],
                         cost_matrix[i][j])
                 else:
-                    if len(self.nodes[j].interval_nodes)>1 and self.nodes[j].interval_nodes[1].ub_is_reachable(self.nodes[i].interval_nodes[0],adj_matrix[i][j]):
+                    if len(self.nodes[j].interval_nodes)>1 and self.nodes[j].interval_nodes[1].ub_is_reachable(
+                            self.nodes[i].interval_nodes[0],adj_matrix[i][j]):
                         Arc(self.nodes[j].interval_nodes[1],
                         self.nodes[i].interval_nodes[0],
                         adj_matrix[i][j],
@@ -292,6 +351,7 @@ class Tsp_ub():
         self.x_names = []
         self.y_names = []
         self.z_names = []
+        
         model = self.model
         model.set_results_stream(None)
         model.set_log_stream(None)
@@ -399,6 +459,15 @@ class Tsp_ub():
         #self.model.set_problem_type(0)
         self.model.solve()
         primal_feasible = self.model.solution.is_primal_feasible()
+        if primal_feasible:
+            self.ub_idx2name={i:n for i,n in enumerate(tsp_ub.model.variables.get_names())}
+            self.primal_x_values = {self.ub_idx2name[i]:val for i,val in enumerate(self.model.solution.get_values())
+            if self.ub_idx2name[i][0]=='x' and val> 0.0001}
+            S=solToComponents(self.primal_x_values)
+            if len(S) != self.n:
+                print "Adding STE cut for set: " + str(S)
+                self.add_ste_cut(S)
+                self.solve_model()
         return primal_feasible
     def add_ste_cut(self,notS):
         in_arc_list = []
@@ -624,7 +693,8 @@ class Tsp_node():
             if split_point > self.tw_ub+tol:
                 print ("Error: split point outside of time window (larger)")
             for i,i_node in enumerate(self.interval_nodes):
-                if i_node.interval[0]+tol < split_point and i_node.interval[1]-tol+2*tol*(i_node.is_tw_ub())> split_point and i_node.interval[1]-tol > split_point :
+                if (i_node.interval[0]+tol < split_point and i_node.interval[1]-tol+2*tol*(i_node.is_tw_ub())> split_point 
+                     and i_node.interval[1]-tol > split_point):
                     return i
             return -1
     def find_lowest_reachable(self,node,step):
@@ -836,21 +906,11 @@ class Tree_node():
             self.tree.add_start_time += time.time() - t_start0
         #model.parameters.preprocessing.presolve.set(0)
         t0 = time.time()
-        #print "start"
         feas = tsp.solve_model()
         self.tree.lp_times.append((time.time()-t0))
         self.tree.simp_iteras.append(model.solution.progress.get_num_iterations())
-        #time.sleep(10)
         model.parameters.advance.set(0)
-        #print "no start"
-        
-        #t0=time.time()
-        #feas = tsp.solve_model()
-        #self.tree.lp_no_dual_times.append((time.time()-t0))
-        #self.tree.simp_nd_iteras.append(model.solution.progress.get_num_iterations())
-        #time.sleep(10)
         if not feas:
-            
             self.lower_bound = 1000000
             model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
             return 0
@@ -862,6 +922,17 @@ class Tree_node():
             self.dual_values_branches = dual_values[self.tree.tsp.const_num:]
             self.primal_values = solution.get_values()
             self.lower_bound = solution.get_objective_value()
+            self.reduced_costs = solution.get_reduced_costs()
+            #TODO: Check this reduced cost fixing
+            oldLen = len(self.branches)
+            for i,val in enumerate(self.reduced_costs):
+                if self.tree.tsp.idx2name[i][0] == 'x' and self.lower_bound + val >= self.tree.ub:
+                    self.branches.append(Branch(self.tree.tsp.idx2name[i],'L',0.0))
+                    self.branch_names.append(self.branches[-1].name)
+                    self.branch_lin_exprs.append(self.branches[-1].lin_expr)
+                    self.branch_senses.append(self.branches[-1].sense)
+                    self.branch_rhs.append(self.branches[-1].rhs)
+                    self.dual_values_branches.append(0.0)
             self.primal_x_values = {name:self.primal_values[self.tree.tsp.name2idx[name]] for name in self.tree.tsp.x_names 
                                     if self.primal_values[self.tree.tsp.name2idx[name]]>tol}
             self.primal_y_values = {name:self.primal_values[self.tree.tsp.name2idx[name]] for name in self.tree.tsp.y_names
@@ -875,7 +946,7 @@ class Tree_node():
                 if abs(0.5-val)<0.5-tol:
                     self.y_fractionals[key] = val
             self.tree.sol_eval_time += time.time() - t_sol_eval0
-        model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
+        model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
         #self.tree.total_relaxation_time += time.time() - t0
         return 1
     def is_x_integer(self):
@@ -936,8 +1007,9 @@ class cutFinder():
         obj = self.model.solution.get_objective_value()
 
         cut_S = [s]
-        indices = range(0,self.tsp.n-1)
+        indices = range(0,self.tsp.n)
         indices.pop(s)
+        indices.remove(t)
         if obj < 1-tol:
             #print dual_values
             print obj
@@ -954,6 +1026,100 @@ class cutFinder():
             cut_S=-1
         self.model.linear_constraints.add(names=["flow_%d" % s],lin_expr=[s_coefs],rhs=[0],senses=["E"])
         self.model.linear_constraints.add(names=["flow_%d" % t],lin_expr=[t_coefs],rhs=[0],senses=["E"])
+        for key,val in capacities.iteritems():
+            self.model.linear_constraints.set_rhs('c'+key[1:],0)
+        self.dual_name2idx = { n : j for j, n in enumerate(self.model.linear_constraints.get_names()) }
+        return cut_S
+    def findCutij(self,s,t,i,j,tsp,capacities,tol=0.0001):
+        #s_coefs = self.model.linear_constraints.get_rows("flow_%d" % s)
+        #t_coefs = self.model.linear_constraints.get_rows("flow_%d" % t)
+        #self.model.linear_constraints.delete("flow_%d" % s)
+        #self.model.linear_constraints.delete("flow_%d" % t)
+        i_coefs = self.model.linear_constraints.get_rows("flow_%d" % i)
+        j_coefs = self.model.linear_constraints.get_rows("flow_%d" % j)
+        self.model.linear_constraints.delete("flow_%d" % i)
+        self.model.linear_constraints.delete("flow_%d" % j)
+        self.dual_name2idx = { n : q for q, n in enumerate(self.model.linear_constraints.get_names()) }
+        for key,val in capacities.iteritems():
+            #p,q = (int(re.split("[_]",key)[1]),int(re.split("[_]",key)[2]))
+            #if p not in tsp.calcW([i],[j]) and q not in tsp.calcW([i],[j]) and (p,q) not in tsp.calcQ([i],[j]):
+            self.model.linear_constraints.set_rhs('c'+key[1:],val)
+            #else:
+            #    self.model.linear_constraints.set_rhs('c'+key[1:],0)
+        for pred in tsp.adj_matrix_tr[j]:
+            self.model.objective.set_linear("f_%d_%d" % (pred,j),1.0)
+        self.model.set_problem_type(0)
+        self.model.solve()
+        dual_values = self.model.solution.get_dual_values()
+        obj = self.model.solution.get_objective_value()
+
+        cut_S = [i]
+        indices = range(1,self.tsp.n-1)
+        indices.remove(i)
+        indices.remove(j)
+        if obj < 1-tol:
+            #print dual_values
+            print obj
+            #for p,name in enumerate(self.model.variables.get_names()):
+            #    if self.model.solution.get_values(name)> 0.01:
+            #        print name +": " + str(self.model.solution.get_values(name))
+            print "%d cannot be reached from %d at full capacity" % (j,i)
+            for index in indices:
+                if dual_values[self.dual_name2idx["flow_%d"%index]]> tol:
+                    continue
+                else:
+                    cut_S.append(index)
+        else:
+            cut_S=-1
+        #self.model.linear_constraints.add(names=["flow_%d" % s],lin_expr=[s_coefs],rhs=[0],senses=["E"])
+        #self.model.linear_constraints.add(names=["flow_%d" % t],lin_expr=[t_coefs],rhs=[0],senses=["E"])
+        self.model.linear_constraints.add(names=["flow_%d" % i],lin_expr=[i_coefs],rhs=[0],senses=["E"])
+        self.model.linear_constraints.add(names=["flow_%d" % j],lin_expr=[j_coefs],rhs=[0],senses=["E"])
+        for key,val in capacities.iteritems():
+            self.model.linear_constraints.set_rhs('c'+key[1:],0)
+        for pred in tsp.adj_matrix_tr[j]:
+            self.model.objective.set_linear("f_%d_%d" % (pred,j),0.0)
+        self.dual_name2idx = { n : q for q, n in enumerate(self.model.linear_constraints.get_names()) }
+        return cut_S
+    def findCutS(self,S,t,capacities,tol=0.0001):
+        s_coefs = []
+        for s in S:
+            s_coefs.append(self.model.linear_constraints.get_rows("flow_%d" % s))
+        t_coefs = self.model.linear_constraints.get_rows("flow_%d" % t)
+        for s in S:
+            self.model.linear_constraints.delete("flow_%d" % s)
+        self.model.linear_constraints.delete("flow_%d" % t)
+        self.dual_name2idx = { n : j for j, n in enumerate(self.model.linear_constraints.get_names()) }
+        for key,val in capacities.iteritems():
+            self.model.linear_constraints.set_rhs('c'+key[1:],val)
+        self.model.set_problem_type(0)
+        self.model.solve()
+        dual_values = self.model.solution.get_dual_values()
+        obj = self.model.solution.get_objective_value()
+
+        cut_S = list(S)
+        indices = [i for i in range(0,self.tsp.n-1) if not i in S]
+        if obj < 1-tol:
+            #print dual_values
+            print obj
+            #for p,name in enumerate(self.model.variables.get_names()):
+            #    if self.model.solution.get_values(name)> 0.01:
+            #        print name +": " + str(self.model.solution.get_values(name))
+            print "goal cannot be reached from %d at full capacity" % s
+            for index in indices:
+                if dual_values[self.dual_name2idx["flow_%d"%index]]> tol:
+                    continue
+                else:
+                    cut_S.append(index)
+        else:
+            cut_S=-1
+        #print S
+        #print s_coefs
+        for i,s in enumerate(S):
+            self.model.linear_constraints.add(names=["flow_%d" % s],lin_expr=[s_coefs[i]],rhs=[0],senses=["E"])
+        self.model.linear_constraints.add(names=["flow_%d" % t],lin_expr=[t_coefs],rhs=[0],senses=["E"])
+        for key,val in capacities.iteritems():
+            self.model.linear_constraints.set_rhs('c'+key[1:],0)
         self.dual_name2idx = { n : j for j, n in enumerate(self.model.linear_constraints.get_names()) }
         return cut_S
     def createFlowModel (self,adj_matrix):
@@ -1014,6 +1180,7 @@ def find_times(tree_node,tol=0.0001,add_all=1):
     else:
         split_points=[]
         split_points_temp={i:(0,-1) for i in adj_matrix}
+        scores = {}
     for key,val in y_frac.iteritems():
         if val>tol:
             #Todo: adjust code so that this is unneccessary
@@ -1029,14 +1196,35 @@ def find_times(tree_node,tol=0.0001,add_all=1):
                             split_points.append((j,arrTime))
                 else:
                     score=(lb_1+adj_matrix[i][j]-lb_2)*val
+                    if scores.has_key((j,lb_2)):
+                        if scores[j,lb_2].has_key(arrTime):
+                            scores[j,lb_2][arrTime][0]+=val
+                            scores[j,lb_2][arrTime][1]+=score
+                        else:
+                            scores[j,lb_2][arrTime]=[val,score]
+                    else:
+                        scores[j,lb_2]={arrTime:[val,score]}
                     if score > split_points_temp[j][1]:
                         if lb_2-lb_1-adj_matrix[i][j]<-tol:
                             split_points_temp[j] = (arrTime,score,i)
+    for i,lb in scores.keys():
+        for arrTime in scores[i,lb]:
+            for arrTime2 in scores[i,lb]:
+                if arrTime2 > arrTime:
+                    scores[i,lb][arrTime][1]+=(arrTime-lb)*scores[i,lb][arrTime2][0]
+        bestScore = 0
+        bestTime = 0
+        for arrTime in scores[i,lb]:
+            if scores[i,lb][arrTime][1]>bestScore:
+                bestScore=scores[i,lb][arrTime][1]
+                bestTime=arrTime
+        scores[i,lb]={bestTime:scores[i,lb][bestTime]}
+
     if not add_all:
-        for j in split_points_temp:
+        for j,lb in scores:
             if j in range(1,len(adj_matrix)-1):
-                if split_points_temp[j][1] >0:
-                    split_points.append((j,split_points_temp[j][0]))
+                if split_points_temp[j][1] > 0:
+                    split_points.append((j,scores[j,lb].keys()[0]))
     times = numpy.linalg.solve(A,b)
     times = times.tolist()
     times.pop(-1)
@@ -1044,7 +1232,7 @@ def find_times(tree_node,tol=0.0001,add_all=1):
 
 class Tree():
     def __init__(self,tsp,start_control):
-        self.print_interval = 25
+        self.print_interval = 10
         self.add_all_split_points=1
         #self.print_switch = 0
         self.psi_avg = 0
@@ -1056,6 +1244,7 @@ class Tree():
         self.branch_variable_selection_time = 0.0
         self.node_selection_time = 0.0
         self.total_relaxation_time = 0.0
+        self.find_pi_sigma_time = 0.0
         self.find_ste_time = 0.0
         self.add_cut_time = 0.0
         self.split_time = 0.0
@@ -1107,14 +1296,20 @@ class Tree():
         t0=time.time()
         splitNodesForNonInteger = 1
         addCutForNonInteger = 1
+        addPiSigmaCutForNonInteger = 0
         oldLb=0
+        piSigmaCount = 0
         root_relaxation = 1
         initial_check = 1
+        splitCount = 0
         while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
             self.count += 1
             cutAdded = 0
+            piSigmaCutAdded = 0
             splitNodes = 0
-            node = self.choose_node(3)
+            addedCuts = 0
+            connected = 1
+            node = self.choose_node()
             if len(self.open_nodes)>0 and initial_check:
                 if hasattr(self,'tsp_ub'):
                     if self.tsp_ub.solve_model():
@@ -1132,20 +1327,22 @@ class Tree():
                         initial_check = 0
                             
                 root_relaxation = 0
-            if self.count>50:
+            if self.count>400:
                 addCutForNonInteger = 0
+            if piSigmaCount>50:
+                addPiSigmaCutForNonInteger = 0
             #if abs(oldLb-node.lower_bound)<0.1:
             #    splitNodesForNonInteger = 0
             #if abs(oldLb-node.lower_bound)>5:
             #    splitNodesForNonInteger = 0
             #oldLb=node.lower_bound
-            if self.count % 5 and splitNodesForNonInteger and self.count > 50:
-                if abs(self.lb-oldLb)<0.1:
+            if self.count % 5 == 0 and splitNodesForNonInteger:
+                if abs(self.lb-oldLb)<0.5:
                     splitNodesForNonInteger = 0
                 oldLb=self.lb
                 
-            self.conditional_print("Current lower bound: %f" % self.lb)
-            self.conditional_print("Current best upper Bound: %f" % self.ub)
+            self.conditional_print("Current lower bound: %f (without service time: %f)" % (self.lb,self.lb-self.service_time))
+            self.conditional_print("Current best upper Bound: %f (without service time: %f)" % (self.ub,self.ub-self.service_time))
             self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
             t_ste_0 = time.time()
             S = solToComponents(node.primal_x_values)
@@ -1155,35 +1352,26 @@ class Tree():
                 print "Adding STE cut for set: " + str(S)
                 cutAdded = 1
                 self.tsp.add_ste_cut(S)
-            else:
+                addedCuts += 2
+                connected = 0
+            if connected:
                 if len(node.fractionals)>0 and addCutForNonInteger:
                     t_ste_0 = time.time()
                     for i in range(1,len(self.tsp.adj_matrix)-1):
-                        S = self.cutFinder.findCut(i,len(self.tsp.nodes)-1,node.primal_x_values)
-                        if S!=-1:
-                            print "Adding STE cut for set: " + str(S)
-                            cutAdded = 1
-                            self.tsp.add_ste_cut(S)
-                            self.find_ste_time +=time.time()-t_ste_0
-                            break
+                        prevS=[]
+                        S=[i]
+                        while S!=-1 and len(self.tsp.piOfS(prevS))!=len(self.tsp.piOfS(S)):
+                            prevS=S
+                            S = self.cutFinder.findCutS(S,len(self.tsp.nodes)-1,node.primal_x_values)
+                            if S!=-1 and len(S)!=len(prevS):
+                                print "Adding SOP PI- and Sigma- cuts for set: " + str(S)
+                                cutAdded = 1
+                                self.tsp.add_ste_cut(S)
+                                addedCuts += 2
+                        break
                     self.find_ste_time +=time.time()-t_ste_0
-            if cutAdded:
-                t_add_cut0 = time.time()
-                pop_indices=[]
-                self.open_nodes.append(node)
-                for i,node2 in enumerate(self.open_nodes):
-                    if self.tsp.update_duals:
-                        node2.dual_values_model += [0.0,0.0]
-                    node2.solve_lp_relaxation()
-                    if not node2.feasible or node2.lower_bound >= self.ub:
-                        pop_indices.append(i)
-                while (len(pop_indices)>0):
-                    self.open_nodes.pop(pop_indices.pop(-1))
-                self.add_cut_time += time.time() - t_add_cut0 
-                continue
-            
             #Segment to split nodes, if nodes are split loop is continued
-            if len(node.fractionals)==0 or splitNodesForNonInteger:
+            if not cutAdded and (len(node.fractionals)==0 or splitNodesForNonInteger):
                 t_find_split0 = time.time()
                 times,split_points= find_times(node,add_all=self.add_all_split_points)
                 for i,t in enumerate(times):
@@ -1192,7 +1380,60 @@ class Tree():
                         self.find_split_time += time.time() - t_find_split0
                         break
                 self.find_split_time += time.time() - t_find_split0
+            if connected and not splitNodes:
+                if len(node.fractionals)>0 and addPiSigmaCutForNonInteger and not cutAdded:
+                    t_pisigma_0 = time.time()
+                    for i in self.tsp.precedence_graph:
+                        for j in self.tsp.precedence_graph[i]:
+                            if i!= 0 and j != self.tsp.n-1 and self.tsp.adj_matrix[i].has_key(j):  
+                                primal_copy= dict(node.primal_x_values)
+                                for key,val in node.primal_x_values.iteritems():
+                                    p,q = (int(re.split("[_]",key)[1]),int(re.split("[_]",key)[2]))
+                                    if p not in self.tsp.calcW([i],[j]) and q not in self.tsp.calcW([i],[j]) and (p,q) not in self.tsp.calcQ([i],[j]):
+                                        continue
+                                    else:
+                                        primal_copy.pop(key)
+                                S = solToComponents(primal_copy,i)
+                                #if len(S) != self.tsp.n:
+                                #    print S
+                                #    time.sleep(30)
+                                if j in S:
+                                    S = self.cutFinder.findCutij(0,self.tsp.n-1,i,j,self.tsp,primal_copy)
+                                if S!=-1:
+                                    print "Adding PI-SIGMA-cut for set: " + str(S) + " with node Sets {%d},{%d}" %(i,j)
+                                    #print "Direct flow is: %f" % primal_copy["x_%d_%d"%(i,j)]
+                                    #print node.primal_x_values
+                                    #time.sleep(5)
+                                    cutAdded = 1
+                                    piSigmaCutAdded = 1
+                                    self.tsp.add_pi_sigma_cut([i],[j],S)
+                                    addedCuts += 1
+                                    piSigmaCount += 1
+                                    #print "W: " + str(self.tsp.calcW([i],[j]))
+                                    #print "Q: " + str(self.tsp.calcQ([i],[j]))
+                                    #time.sleep(10)
+                                    break
+                                if piSigmaCutAdded:
+                                    break
+                        #if piSigmaCutAdded:
+                        #    break
+                    self.find_pi_sigma_time +=time.time()-t_pisigma_0
+            if cutAdded or piSigmaCutAdded:
+                t_add_cut0 = time.time()
+                pop_indices=[]
+                self.open_nodes.append(node)
+                for i,node2 in enumerate(self.open_nodes):
+                    if self.tsp.update_duals:
+                            node2.dual_values_model += [0.0]*addedCuts
+                    node2.solve_lp_relaxation()
+                    if not node2.feasible or node2.lower_bound >= self.ub:
+                        pop_indices.append(i)
+                while (len(pop_indices)>0):
+                    self.open_nodes.pop(pop_indices.pop(-1))
+                self.add_cut_time += time.time() - t_add_cut0 
+                continue
             if splitNodes:
+                splitCount += 1
                 t_split0 = time.time()
                 print "Splitting nodes"
                 #print split_points
@@ -1212,6 +1453,8 @@ class Tree():
                     if self.tsp_ub.solve_model():
                         print "Heuristic found integer solution with value: %.2f" % tsp_ub.model.solution.get_objective_value()
                         self.ub = tsp_ub.model.solution.get_objective_value()
+                        if tsp_ub.model.solution.get_objective_value() < self.ub:
+                            self.ub = tsp_ub.model.solution.get_objective_value()
                 if len(split_points)==0:
                     self.open_nodes.append(node)
                     splitNodesForNonInteger = 0
@@ -1281,12 +1524,14 @@ class Tree():
         timefeasible=0
         splits=0
         addCutForNonInteger = 1
+        
         while not timefeasible and splits<split_limit:
             addCutForNonInteger = 1
             while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
+                self.solution_node=0
                 self.count+=1
                 cutAdded = 0
-
+                addedCuts = 0
                 node = self.choose_node()
                 if len(self.open_nodes)>4:
                     addCutForNonInteger = 0
@@ -1300,27 +1545,32 @@ class Tree():
                     print "Adding STE cut for set: " + str(S)
                     cutAdded = 1
                     self.tsp.add_ste_cut(S)
-                else:
+                    addedCuts += 2
+                else:            
                     if len(node.fractionals)>0 and addCutForNonInteger:
-                        t_find_cut0 = time.time()
+                        t_ste_0 = time.time()
                         for i in range(1,len(self.tsp.adj_matrix)-1):
-                            S = self.cutFinder.findCut(i,len(self.tsp.nodes)-1,node.primal_x_values)
-                            if S!=-1:
-                                print "Adding STE cut for set: " + str(S)
-                                cutAdded = 1
-                                self.tsp.add_ste_cut(S)
-                                self.find_ste_time += time.time() - t_find_cut0
-                                break
-                        self.find_ste_time += time.time() - t_find_cut0
+                            prevS=[]
+                            S=[i]
+                            while S!=-1 and len(self.tsp.piOfS(prevS))!=len(self.tsp.piOfS(S)):
+                                prevS=S
+                                S = self.cutFinder.findCutS(S,len(self.tsp.nodes)-1,node.primal_x_values)
+                                if S!=-1 and len(S)!=len(prevS):
+                                    print "Adding SOP PI- and Sigma- cuts for set: " + str(S)
+                                    cutAdded = 1
+                                    self.tsp.add_ste_cut(S)
+                                    addedCuts += 2
+                            break
+                        self.find_ste_time +=time.time()-t_ste_0
                 if cutAdded:
                     t_cut_0 = time.time()
                     pop_indices=[]
                     self.open_nodes.append(node)
                     for i,node2 in enumerate(self.open_nodes):
                         if self.tsp.update_duals:
-                            node2.dual_values_model += [0.0,0.0]
+                            node2.dual_values_model += [0.0]*addedCuts
                         node2.solve_lp_relaxation()
-                        if not node2.feasible or node2.lower_bound >= self.ub:
+                        if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
                         self.open_nodes.pop(pop_indices.pop(-1))
@@ -1330,14 +1580,14 @@ class Tree():
                 
                 
                 #segment if no cut was added
-                if len(node.fractionals) == 0:
-                    print "Integer feasible tour without cycle found, objective: %f" %node.lower_bound
+                if len(node.fractionals) == 0 and node.lower_bound < self.ub-0.99:
+                    print "Integer feasible tour without cycle found, objective: %f" % node.lower_bound
                     self.ub = node.lower_bound
                     self.solution_node=node
                     pop_indices=[]
                     #pruning of tree
                     for i,node2 in enumerate(self.open_nodes):
-                        if not node2.feasible or node2.lower_bound >= self.ub:
+                        if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
                         self.open_nodes.pop(pop_indices.pop(-1))
@@ -1369,9 +1619,11 @@ class Tree():
                     #time.sleep(10)
                     for new_node1 in new_node_list:
                         if new_node1.feasible:
-                            if new_node1.lower_bound < self.ub-0.0001:
+                            if new_node1.lower_bound < self.ub-0.99:
                                 self.open_nodes.append(new_node1)
             #time.sleep(1)
+            if self.solution_node == 0:
+                break
             timefeasible = 1
             t_split0 = time.time()
             t_find_split0 = time.time()
@@ -1384,14 +1636,22 @@ class Tree():
                     break
             self.find_split_time += time.time() - t_find_split0
             if not timefeasible:
-                #t_split0 = time.time()
-                splits+=1
                 print "Splitting nodes"
-                #print split_points
                 for i,t in split_points:
-                        self.tsp.nodes[i].split_node(t)
+                    self.tsp.nodes[i].split_node(t)
+                    if hasattr(self,'tsp_ub'):
+                        self.tsp_ub.nodes[i].split_node_ub(t)
+                if hasattr(self,'tsp_ub'):
+                    if self.tsp_ub.solve_model():
+                        print "Heuristic found integer solution with value: %.2f" % tsp_ub.model.solution.get_objective_value()
+                        if tsp_ub.model.solution.get_objective_value() < self.ub:
+                            self.ub = tsp_ub.model.solution.get_objective_value()
+                #t_split0 = time.time()
+                splits += 1
                 self.root = Tree_node(self,[])
                 self.open_nodes = [self.root]
+                if self.root.lower_bound > self.ub -0.99:
+                    break
             self.split_time += time.time()-t_split0
                 
             
@@ -1510,7 +1770,8 @@ def build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix):
             adj_matrix_tr[j][i]=adj_matrix[i][j]
     return precedence_graph
             
-def adjust_TWs(adj_matrix,adj_matrix_tr,TWs): 
+def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
+    vert_num=len(TWs)
     TWs_changed=1
     while TWs_changed:
         TWs_changed=0
@@ -1561,89 +1822,107 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
   
 
 #"""
-#instance_name = "n40w40.001.txt"
-#vert_num,TWs,adj_matrix = readData(instance_name,"Dumas")
-instance_name = "rbg027a.tw"
-vert_num,TWs,adj_matrix = readData(instance_name,"AFG")
-#print adj_matrix[28][1]
-vert_num += 1
-TWs.append([TWs[0][0],TWs[0][1]])
-TWs[0][1]=0
-#TWs.append([TWs[0][0],TWs[0][1]])
-processed = [0]
-toBeUpdated = [i for i in adj_matrix[0]]
-adj_matrix[vert_num-1] = {}
-#old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-
-for i in  range(vert_num):
-    if adj_matrix[i].has_key(0):
-        adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
-    if adj_matrix[i].has_key(i):
-        adj_matrix[i].pop(i)
-old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-adj_matrix_tr={i:{} for i in adj_matrix}
-for i in adj_matrix:
-    for j in adj_matrix[i]:
-        adj_matrix_tr[j][i]=adj_matrix[i][j]
-
-oldArcAmount=0
-for i in old_adj_matrix:
-    oldArcAmount+=len(old_adj_matrix[i])
-print "Total number of arcs before preprocessing: %d" % oldArcAmount
-process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-
-adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
-
-g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-processedArcAmount=0
-for i in adj_matrix:
-    processedArcAmount+=len(adj_matrix[i])
-print "Total number of arcs after preprocessing: %d" % processedArcAmount
-#time.sleep(3)
-print "Starting branch and bound process"
-time.sleep(3)
-#blub-8
-#"""
-#nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
-
-
-
-
-#TODO: Fix the ERROR that sometimes a split point is used that already exists!!!
-
-
-
-
-
-tsp = Tsp(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-tsp_ub = Tsp_ub(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-tsp.precedence_graph=g
-tsp.old_adj_matrix=old_adj_matrix
-tsp.update_duals=0
-tsp.adapt_model=0
-for i in tsp.nodes:
-    i.split_node(i.tw_ub)
-tsp.update_duals=1
-tsp.adapt_model=1
-tsp.create_model()
-tree = Tree(tsp,0)
-tree.tsp_ub=tsp_ub
-tsp_ub.create_model()
-
-tree.add_all_split_points=1
-t0=time.time()
-
-#tree.dynamic_discovery(5)
-#print "Finished dynamic discovery starting branch_and_split"
-
-tree.branch_and_split()
-t1=time.time()
-print ("___________________________________________________________\n")
-print "\n\nTotal time: %f\n\n" %(t1-t0)
-print "Average lp time: %f" %(sum(tree.lp_times)/len(tree.lp_times))
-print "Total lp time (includes part of the time of adding cuts/splitting): %f" % sum(tree.lp_times)
-print "Average simplex iterations: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
-print "Total number of nodes visited: %d" % tree.count
-print "Node selection time: %f" % tree.node_selection_time
-print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
-print "Time spend on splitting nodes: %f" % tree.split_time
+#instance_name = "n150w60.001.txt"
+#vert_num,TWs,adj_matrix,service_time = readData(instance_name,"Dumas")
+dynamic_discovery = int(sys.argv[1])
+if dynamic_discovery:
+    saveFileName = "Results_dyn_disc"
+else:
+    saveFileName = "Results_BNT"
+instance_names = ["rbg031a.tw","rbg027a.tw"]
+file = open(saveFileName, "w")
+file.write("{")
+file.close()
+for instance_name in instance_names:
+    if "old_instance_name" not in locals() or instance_name != old_instance_name:
+        vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
+        #print adj_matrix[28][1]
+        vert_num += 1
+        TWs.append([TWs[0][0],TWs[0][1]])
+        TWs[0][1]=0
+        #TWs.append([TWs[0][0],TWs[0][1]])
+        processed = [0]
+        toBeUpdated = [i for i in adj_matrix[0]]
+        adj_matrix[vert_num-1] = {}
+        #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+        
+        for i in  range(vert_num):
+            if adj_matrix[i].has_key(0):
+                adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
+            if adj_matrix[i].has_key(i):
+                adj_matrix[i].pop(i)
+        old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+        adj_matrix_tr={i:{} for i in adj_matrix}
+        for i in adj_matrix:
+            for j in adj_matrix[i]:
+                adj_matrix_tr[j][i]=adj_matrix[i][j]
+        
+        oldArcAmount=0
+        for i in old_adj_matrix:
+            oldArcAmount+=len(old_adj_matrix[i])
+        print "Total number of arcs before preprocessing: %d" % oldArcAmount
+        process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+        
+        adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
+        
+        g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+        processedArcAmount=0
+        for i in adj_matrix:
+            processedArcAmount+=len(adj_matrix[i])
+        print "Total number of arcs after preprocessing: %d" % processedArcAmount
+        #time.sleep(3)
+        print "Starting branch and bound process"
+        #time.sleep(3)
+        #blub-8
+        #"""
+        #nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
+    
+    
+    
+    
+    #TODO: Fix the ERROR that sometimes a split point is used that already exists!!!
+    
+    
+    
+    tsp = Tsp(TWs,adj_matrix,adj_matrix,0,vert_num-1)
+    tsp_ub = Tsp_ub(TWs,adj_matrix,adj_matrix,0,vert_num-1)
+    tsp.precedence_graph = g
+    tsp_ub.precedence_graph = g
+    tsp.old_adj_matrix=old_adj_matrix
+    tsp.adj_matrix_tr = adj_matrix_tr
+    tsp.update_duals=0
+    tsp.adapt_model=0
+    for i in tsp.nodes:
+        i.split_node(i.tw_ub)
+    tsp.update_duals=1
+    tsp.adapt_model=1
+    tsp.create_model()
+    tree = Tree(tsp,0)
+    tree.tsp_ub=tsp_ub
+    tree.service_time = service_time
+    tsp_ub.create_model()
+    
+    tree.add_all_split_points=0
+    t0=time.time()
+    
+    if dynamic_discovery:
+        tree.dynamic_discovery()
+    else:
+        tree.branch_and_split()
+    t1=time.time()
+    print ("___________________________________________________________\n")
+    print "\n\nTotal time: %f\n\n" %(t1-t0)
+    print "Average lp time: %f" %(sum(tree.lp_times)/len(tree.lp_times))
+    print "Total lp time (includes part of the time of adding cuts/splitting): %f" % sum(tree.lp_times)
+    print "Average simplex iterations: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
+    print "Total number of nodes visited: %d" % tree.count
+    print "Node selection time: %f" % tree.node_selection_time
+    print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
+    print "Time spend on splitting nodes: %f" % tree.split_time
+    old_instance_name = instance_name
+    file = open(saveFileName, "a")
+    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d]," %(sum(tree.lp_times),(sum(tree.lp_times)/len(tree.lp_times)),tree.count,(sum(tree.simp_iteras)/len(tree.simp_iteras))))
+    file.close()
+file = open(saveFileName, "a")
+file.write("}")
+file.close()
