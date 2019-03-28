@@ -1848,11 +1848,12 @@ instance_names = [
 "rbg017.2.tw",	"rbg021.4.tw",	"rbg034a.tw",	
 "rbg017.tw",	"rbg021.5.tw",	"rbg035a.2.tw",
 "rbg017a.tw",	"rbg021.6.tw",	"rbg035a.tw",	
-"rbg019a.tw",	"rbg021.7.tw",	"rbg038a.tw",
-"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw",	
-"rbg019c.tw",	"rbg021.9.tw",	"rbg041a.tw",	
-"rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",
+"rbg019a.tw",	"rbg021.7.tw",#	"rbg038a.tw",
+"rbg019b.tw",	"rbg021.8.tw",#	"rbg040a.tw",	
+"rbg019c.tw",	"rbg021.9.tw",#	"rbg041a.tw",	
+"rbg019d.tw",	"rbg021.tw",#	"rbg042a.tw",
 ]
+instance_names = ["rbg035a.2.tw"]
 file = open(saveFileName, "w")
 file.write("{")
 file.close()
