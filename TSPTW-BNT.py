@@ -1259,7 +1259,7 @@ class Tree():
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         self.branch_history = {key:[] for key in tsp.x_names}
-        self.time_limit = 30000
+        self.time_limit = 10000
         self.cutFinder = cutFinder(self.tsp)
     def conditional_print(self,string):
         if self.count % self.print_interval == 0:
@@ -1296,7 +1296,7 @@ class Tree():
         t0=time.time()
         splitNodesForNonInteger = 1
         addCutForNonInteger = 1
-        addPiSigmaCutForNonInteger = 0
+        addPiSigmaCutForNonInteger = 1
         oldLb=0
         piSigmaCount = 0
         root_relaxation = 1
@@ -1336,7 +1336,7 @@ class Tree():
             #if abs(oldLb-node.lower_bound)>5:
             #    splitNodesForNonInteger = 0
             #oldLb=node.lower_bound
-            if self.count % 5 == 0 and splitNodesForNonInteger:
+            if self.count % 8 == 0 and splitNodesForNonInteger:
                 if abs(self.lb-oldLb)<0.5:
                     splitNodesForNonInteger = 0
                 oldLb=self.lb
@@ -1848,12 +1848,12 @@ instance_names = [
 "rbg017.2.tw",	"rbg021.4.tw",	"rbg034a.tw",	
 "rbg017.tw",	"rbg021.5.tw",	"rbg035a.2.tw",
 "rbg017a.tw",	"rbg021.6.tw",	"rbg035a.tw",	
-"rbg019a.tw",	"rbg021.7.tw",#	"rbg038a.tw",
-"rbg019b.tw",	"rbg021.8.tw",#	"rbg040a.tw",	
-"rbg019c.tw",	"rbg021.9.tw",#	"rbg041a.tw",	
-"rbg019d.tw",	"rbg021.tw",#	"rbg042a.tw",
+"rbg019a.tw",	"rbg021.7.tw",	"rbg038a.tw",
+"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw",	
+"rbg019c.tw",	"rbg021.9.tw",	"rbg041a.tw",	
+"rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",
 ]
-#instance_names = ["rbg035a.2.tw"]
+#instance_names = ["rbg019d.tw"]
 file = open(saveFileName, "w")
 file.write("{")
 file.close()
