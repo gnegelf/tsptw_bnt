@@ -1261,6 +1261,7 @@ class Tree():
         self.branch_history = {key:[] for key in tsp.x_names}
         self.time_limit = 10000
         self.cutFinder = cutFinder(self.tsp)
+        self.count=0
     def conditional_print(self,string):
         if self.count % self.print_interval == 0:
             print string
@@ -1292,7 +1293,6 @@ class Tree():
         self.node_selection_time += time.time() - t0
         return self.open_nodes.pop(minInd)
     def branch_and_split(self):
-        self.count=1
         t0=time.time()
         splitNodesForNonInteger = 1
         addCutForNonInteger = 1
@@ -1520,7 +1520,7 @@ class Tree():
                             self.open_nodes.append(new_node1)
     def dynamic_discovery(self,split_limit=10000):
         t0=time.time()
-        self.count=0
+        #self.count=0
         timefeasible=0
         splits=0
         addCutForNonInteger = 1
@@ -1825,6 +1825,7 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
 #instance_name = "n150w60.001.txt"
 #vert_num,TWs,adj_matrix,service_time = readData(instance_name,"Dumas")
 dynamic_discovery = int(sys.argv[1])
+startHeurIter = int(sys.argv[2])
 if dynamic_discovery:
     saveFileName = "Results_dyn_disc"
 else:
@@ -1932,6 +1933,7 @@ for instance_name in instance_names:
     if dynamic_discovery:
         tree.dynamic_discovery()
     else:
+        tree.dynamic_discovery(startHeurIter)
         tree.branch_and_split()
     t1=time.time()
     print ("___________________________________________________________\n")
@@ -1945,7 +1947,7 @@ for instance_name in instance_names:
     print "Time spend on splitting nodes: %f" % tree.split_time
     old_instance_name = instance_name
     file = open(saveFileName, "a")
-    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d]," %(sum(tree.lp_times),(sum(tree.lp_times)/len(tree.lp_times)),tree.count,(sum(tree.simp_iteras)/len(tree.simp_iteras))))
+    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%d]," %(sum(tree.lp_times),(sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.ub,(sum(tree.simp_iteras)/len(tree.simp_iteras))))
     file.close()
 file = open(saveFileName, "a")
 file.write("}")
