@@ -1054,6 +1054,39 @@ def mostSkippingPath(tsp,primal_values):
     return split_points
 
 
+def mostSkippingPathOld(tsp,primal_values,goal,split_points):
+    G=nx.DiGraph()
+    goal=(goal,0)
+    for key,val in primal_values.iteritems():
+        if val>0.00001:
+            tail=(int(re.split("[_]",key)[1]),int(re.split("[_]",key)[3]))
+            head=(int(re.split("[_]",key)[2]),int(re.split("[_]",key)[4]))
+            arc_length = head[1]-tail[1]
+            #real_length = tsp.adj_matrix[tail[0]][head[0]]
+            if tail[0] == 0:
+                tail=(0,0)
+            else:
+                if tail[0]==goal[0]:
+                    tail=goal
+            if head[0]==goal[0]:
+                head=goal
+                
+            
+            G.add_edge(tail,head,weight= (1-val)*(max(0.001,arc_length)))
+    print primal_values
+    sp=nx.shortest_path(G,(0,0),goal,weight='weight')
+    #split_points = []
+    correct_time = 0
+    for i in range(len(sp)-1):
+        head=sp[i+1]
+        tail=sp[i]
+        real_length = max(tsp.adj_matrix[tail[0]][head[0]],tsp.TWs[head[0]][0]-tail[1])
+        correct_time +=  int(real_length)
+        if correct_time > TWs[head[0]][1]+0.0001:
+            break
+        if not tsp.nodes[head[0]].idUsed(correct_time) and (head[0],correct_time) not in split_points:
+            split_points.append((head[0],correct_time))
+
                
 
 
@@ -1323,7 +1356,7 @@ class Tree():
         self.closed_nodes = []
         self.tsp = tsp
         self.tsp.tree = self
-        self.ub = 2223
+        self.ub = 100000
         self.lb = 0.0
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
@@ -1332,6 +1365,7 @@ class Tree():
         self.cutFinder = cutFinder(self.tsp)
         self.count = 0
         self.root_count = 0
+        self.refinement = 0
         
     def conditional_print(self,string):
         if self.count % self.print_interval == 0:
@@ -1381,6 +1415,7 @@ class Tree():
             splitNodes = 0
             addedCuts = 0
             connected = 1
+            #print self.count
             if len(self.open_nodes)>1:
                 root_relax=0
             if root_relax:
@@ -1449,20 +1484,32 @@ class Tree():
             #Segment to split nodes, if nodes are split loop is continued
             if not cutAdded and (len(node.fractionals)==0 or splitNodesForNonInteger):
                 t_find_split0 = time.time()
-                split_points = mostSkippingPath(self.tsp,node.primal_y_values)
-                """
-                times,split_points= find_times(node,add_all=self.add_all_split_points)
+                if self.refinement ==0:
+                    split_points = mostSkippingPath(self.tsp,node.primal_y_values)
+                    if len(split_points)> 0 and len(node.fractionals)==0:
+                        times,a= find_times(node,add_all=self.add_all_split_points)
+                        for i,t in enumerate(times):
+                            if t> self.tsp.nodes[i].tw_ub+0.0001:
+                                mostSkippingPathOld(self.tsp,node.primal_y_values,i,split_points)
+                if self.refinement >0:
+                    times,split_points= find_times(node,add_all=self.add_all_split_points)
+                    if self.refinement ==2:
+                        split_points = []
+                    for i,t in enumerate(times):
+                        if t> self.tsp.nodes[i].tw_ub+0.0001:
+                            splitNodes = 1
+                            if self.refinement==2:
+                                mostSkippingPathOld(self.tsp,node.primal_y_values,i,split_points)
+                                splitNodes = 1
+                            else:
+                                splitNodes = 1
+                                break
+                            #addedCuts = 1
+                            #cutAdded = 1
+                            #self.tsp.add_tour_cut(P)
+                            #self.find_split_time += time.time() - t_find_split0
+                            #break
                 
-                for i,t in enumerate(times):
-                    if t> self.tsp.nodes[i].tw_ub+0.0001:
-                        splitNodes = 1
-                        P = mostSkippingPath(self.tsp,node.primal_y_values,i)
-                        #addedCuts = 1
-                        #cutAdded = 1
-                        #self.tsp.add_tour_cut(P)
-                        self.find_split_time += time.time() - t_find_split0
-                        break
-                """
                 if len(split_points) > 0:
                     splitNodes = 1
                 self.find_split_time += time.time() - t_find_split0
@@ -1723,23 +1770,32 @@ class Tree():
             timefeasible = 1
             t_split0 = time.time()
             t_find_split0 = time.time()
-            split_points = mostSkippingPath(self.tsp,self.solution_node.primal_y_values)
+            if self.refinement == 0:
+                split_points = mostSkippingPath(self.tsp,self.solution_node.primal_y_values)
+            if self.refinment > 0:
+                times,split_points= find_times(self.solution_node,add_all=self.add_all_split_points)
+                if self.refinement ==2:
+                    split_points = []
+                for i,t in enumerate(times):
+                    if t> self.tsp.nodes[i].tw_ub+0.0001:
+                        if self.refinement==2:
+                            mostSkippingPathOld(self.tsp,node.primal_y_values,i,split_points)
+                            self.ub=100000
+                            timefeasible = 0
+                        else:
+                            self.ub=100000
+                            timefeasible = 0
+                            break
+                        #addedCuts = 1
+                        #cutAdded = 1
+                        #self.tsp.add_tour_cut(P)
+                        #self.find_split_time += time.time() - t_find_split0
+                        #break
+                
             if len(split_points) > 0:
                 self.ub=100000#ToDo: das sollte der alte wert der Heuristik sein
                 timefeasible = 0
-            """
-            times,split_points= find_times(self.solution_node,add_all=self.add_all_split_points)
-            for i,t in enumerate(times):
-                if t> self.tsp.nodes[i].tw_ub+0.0001:
-                    #P = mostSkippingPath(self.tsp,node.primal_x_values,i)
-                    #addedCuts = 1
-                    #cutAdded = 1
-                    #self.tsp.add_tour_cut(P)
-                    self.ub=100000
-                    timefeasible = 0
-                    self.find_split_time += time.time() - t_find_split0
-                    break
-            """
+
             self.find_split_time += time.time() - t_find_split0
             if not timefeasible:
                 print "Splitting nodes"
@@ -1972,7 +2028,7 @@ instance_names = [
 "rbg019c.tw",	"rbg021.9.tw",	#"rbg041a.tw",	
 "rbg019d.tw",	"rbg021.tw",	#"rbg042a.tw",
 ]
-instance_names = ["WC-test.tw.txt"]
+instance_names = ["rbg048a.tw"]
 file = open(saveFileName, "w")
 file.write("{")
 file.close()
