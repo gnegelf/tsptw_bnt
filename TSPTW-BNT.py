@@ -941,6 +941,7 @@ class Tree_node():
         #model.parameters.preprocessing.presolve.set(0)
         t0 = time.time()
         feas = tsp.solve_model()
+        self.updated_lp_relaxation = 1
         self.tree.lp_times.append((time.time()-t0))
         self.tree.simp_iteras.append(model.solution.progress.get_num_iterations())
         model.parameters.advance.set(0)
@@ -1425,7 +1426,7 @@ class Tree():
         piSigmaCount = 0
         root_relaxation = 1
         initial_check = hasattr(self,'tsp_ub')
-        
+        cleanup=0
         while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
             self.lbs.append(self.lb)
             self.count += 1
@@ -1439,7 +1440,20 @@ class Tree():
             splitNodesForNonInteger = root_relaxation
             addCutForNonInteger = root_relaxation
             splitNodesForNonInteger = 0
-            
+            if cleanup > 5:
+                pop_indices=[]
+                print "cleaning up tree"
+                for i,node2 in enumerate(self.open_nodes):
+                    if node2.updated_lp_relaxation == 0:
+                        node2.solve_lp_relaxation()
+                    if not node2.feasible or node2.lower_bound >= self.ub-0.99:
+                        pop_indices.append(i)
+                print "removing %d nodes" % len(pop_indices)
+                time.sleep(3)
+                while (len(pop_indices)>0):
+                    self.open_nodes.pop(pop_indices.pop(-1))
+                cleanup=0
+                
             
             if len(self.open_nodes)>1:
                 root_relaxation = 0
@@ -1456,14 +1470,23 @@ class Tree():
                         pop_indices = []
                         if node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
-                        while (len(pop_indices)>0):
-                            self.open_nodes.pop(pop_indices.pop(-1))
-                        continue
+                    while (len(pop_indices)>0):
+                        self.open_nodes.pop(pop_indices.pop(-1))
+                    continue
                 else:
                     print "Heuristic did not find any solution."
             
+            self.conditional_print("Current lower bound: %f (without service time: %f)" % (self.lb,self.lb-self.service_time))
+            self.conditional_print("Current best upper Bound: %f (without service time: %f)" % (self.ub,self.ub-self.service_time))
+            self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
+            
+            
             
             node = self.choose_node()
+            if node.updated_lp_relaxation == 0:
+                node.solve_lp_relaxation()
+            if not node.feasible or node.lower_bound >= self.ub:
+                continue
             t_ste_0 = time.time()
             S = solToComponents(node.primal_x_values)
             self.find_ste_time +=time.time()-t_ste_0
@@ -1471,9 +1494,7 @@ class Tree():
             
             
             
-            self.conditional_print("Current lower bound: %f (without service time: %f)" % (self.lb,self.lb-self.service_time))
-            self.conditional_print("Current best upper Bound: %f (without service time: %f)" % (self.ub,self.ub-self.service_time))
-            self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
+            
             #Segment to add STE Cuts, if a cut is added loop is continued
             if len(S) != self.tsp.n:
                 print "Adding STE cut for set: " + str(S)
@@ -1547,6 +1568,7 @@ class Tree():
                                 P2[pathNode] = newPath
                         P = P2
                     if splitNodes > 0:
+                        cleanup += 1
                         print "Splitting nodes"
                         if hasattr(self,'tsp_ub')and (not root_relaxation or len(node.fractionals)==0):
                             print "Nodes split starting Heuristic"
@@ -1560,7 +1582,9 @@ class Tree():
                         #node.solve_lp_relaxation(dual_value_locations)
                         self.open_nodes.append(node)
                         for i,node2 in enumerate(self.open_nodes):
-                            node2.solve_lp_relaxation(dual_value_locations)
+                            #node2.solve_lp_relaxation(dual_value_locations)
+                            node2.update_dual_values(dual_value_locations)
+                            node2.updated_lp_relaxation = 0
                             if not node2.feasible or node2.lower_bound >= self.ub-0.99:#TODO: Adapt this to non integer objective
                                 pop_indices.append(i)
                         while (len(pop_indices)>0):
@@ -1607,13 +1631,15 @@ class Tree():
                         #    break
                     self.find_pi_sigma_time +=time.time()-t_pisigma_0
             if cutAdded or piSigmaCutAdded:
+                #cleanup += 1
                 t_add_cut0 = time.time()
                 pop_indices=[]
                 self.open_nodes.append(node)
                 for i,node2 in enumerate(self.open_nodes):
                     if self.tsp.update_duals:
                         node2.dual_values_model += [0.0]*addedCuts
-                    node2.solve_lp_relaxation()
+                    node2.updated_lp_relaxation = 0
+                    #node2.solve_lp_relaxation()
                     if not node2.feasible or node2.lower_bound >= self.ub:
                         pop_indices.append(i)
                 while (len(pop_indices)>0):
@@ -1623,9 +1649,10 @@ class Tree():
             
             #segment if no cut was added and nodes were not split
             if len(node.fractionals) == 0:
-                print "Integer feasible solution found, objective: %f" %node.lower_bound
-                self.ub = node.lower_bound
-                self.solution_node=node
+                if node.lower_bound < self.ub-0.99:
+                    print "Integer feasible solution found, objective: %f" %node.lower_bound
+                    self.ub = node.lower_bound
+                    self.solution_node=node
                 pop_indices=[]
                 #pruning of tree
                 for i,node2 in enumerate(self.open_nodes):
@@ -1670,7 +1697,7 @@ class Tree():
         timefeasible=0
         splits=0
         addCutForNonInteger = 1
-        
+        cleanup = 0
         while not timefeasible and splits<split_limit:
             addCutForNonInteger = 1
             root_relax = 1
@@ -1683,11 +1710,33 @@ class Tree():
                 self.count+=1
                 cutAdded = 0
                 addedCuts = 0
-                node = self.choose_node()
                 addCutForNonInteger = root_relax
+                
+                if cleanup > 20:
+                    print "cleaning up tree"
+                    pop_indices=[]
+                    #pruning of tree
+                    for i,node2 in enumerate(self.open_nodes):
+                        if node2.updated_lp_relaxation == 0:
+                            node2.solve_lp_relaxation()
+                        if not node2.feasible or node2.lower_bound >= self.ub-0.99:
+                            pop_indices.append(i)
+                    print "removing %d nodes" % len(pop_indices)
+                    while (len(pop_indices)>0):
+                        self.open_nodes.pop(pop_indices.pop(-1))
+                    cleanup=0
+                
                 self.conditional_print("Current lower bound: %f" % self.lb)
                 self.conditional_print("Current best upper Bound: %f" % self.ub)
                 self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
+                
+                
+                
+                node = self.choose_node()
+                if node.updated_lp_relaxation == 0:
+                    node.solve_lp_relaxation()
+                if not node.feasible or node.lower_bound >= self.ub:
+                    continue
                 t_find_cut0 = time.time()
                 S = solToComponents(node.primal_x_values)
                 self.find_ste_time += time.time() - t_find_cut0
@@ -1713,13 +1762,14 @@ class Tree():
                             break
                         self.find_ste_time +=time.time()-t_ste_0
                 if cutAdded:
+                    cleanup += 1
                     t_cut_0 = time.time()
                     pop_indices=[]
                     self.open_nodes.append(node)
                     for i,node2 in enumerate(self.open_nodes):
                         if self.tsp.update_duals:
                             node2.dual_values_model += [0.0]*addedCuts
-                        node2.solve_lp_relaxation()
+                        node2.updated_lp_relaxation = 0
                         if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
@@ -1744,7 +1794,7 @@ class Tree():
                 else:
                     #branching step
                     branch_var,branch_val = node.choose_branch_var()
-                    #print "branching"
+                    print "branching"
                     f_1 = 1.0-branch_val
                     f_0 = branch_val
                     if self.tsp.update_duals:
@@ -2036,27 +2086,45 @@ instance_names_full = [
 "rbg017.tw",	"rbg021.5.tw",	"rbg035a.2.tw",	"rbg050c.tw",	"rbg172a.tw",
 "rbg017a.tw",	"rbg021.6.tw",	"rbg035a.tw",	"rbg055a.tw",	"rbg193.2.tw",
 "rbg019a.tw",	"rbg021.7.tw",	"rbg038a.tw",	"rbg067a.tw",	"rbg193.tw",
-"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw	rbg086a.tw",	"rbg201a.tw",
+"rbg019b.tw",	"rbg021.8.tw",	"rbg040a.tw", "rbg086a.tw",	"rbg201a.tw",
 "rbg019c.tw",	"rbg021.9.tw",	"rbg041a.tw",	"rbg092a.tw",	"rbg233.2.tw",
 "rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",	"rbg125a.tw",	"rbg233.tw"
 ]
-instance_names = {
+hard_instance_names ={
+"rbg048a.tw":9383,	"rbg132.2.tw":8200,
+"rbg049a.tw":10018,	"rbg132.tw":8470,
+"rbg152.3.tw":9797,
+	"rbg050b.tw":9863,	"rbg152.tw":10032,
+	"rbg050c.tw":10024,	"rbg172a.tw":10961,
+	"rbg193.2.tw":12167,
+	"rbg193.tw":12547,
+"rbg086a.tw":8400,	"rbg201a.tw":12967,
+"rbg041a.tw":2598,	"rbg092a.tw":7160,	"rbg233.2.tw":14549,
+"rbg042a.tw":2772,	"rbg233.tw":15031 
+}
+easy_instance_names = {
 "rbg010a.tw":671,	"rbg020a.tw":4689,	"rbg027a.tw":5091,	
 "rbg016a.tw":938,	"rbg021.2.tw":4528,	"rbg031a.tw":1863,	
 "rbg016b.tw":1304,	"rbg021.3.tw":4528,	"rbg033a.tw":2069,	
 "rbg017.2.tw":852,	"rbg021.4.tw":4525,	"rbg034a.tw":2222,	
 "rbg017.tw":893,	"rbg021.5.tw":4515,	"rbg035a.2.tw":2056,
 "rbg017a.tw":4296,	"rbg021.6.tw":4480,	"rbg035a.tw":2144,	
-"rbg019a.tw":1262,	"rbg021.7.tw":4479,	#"rbg038a.tw",
-"rbg019b.tw":1866,	"rbg021.8.tw":4478,	#"rbg040a.tw",	
-"rbg019c.tw":4536,	"rbg021.9.tw":4478,	#"rbg041a.tw",	
-"rbg019d.tw":1356,	"rbg021.tw":4536,	#"rbg042a.tw",
+"rbg019a.tw":1262,	"rbg021.7.tw":4479,	"rbg038a.tw":2480,
+"rbg019b.tw":1866,	"rbg021.8.tw":4478,	"rbg040a.tw":2378,	
+"rbg019c.tw":4536,	"rbg021.9.tw":4478,		
+"rbg019d.tw":1356,	"rbg021.tw":4536,
+"rbg050a.tw":2953 , "rbg055a.tw": 3761, "rbg067a.tw": 4625,#"rbg125a.tw":7936
 }
-instance_names = {	"rbg042a.tw":5091,	}
+instance_choice = "easy"
+if instance_choice == "easy":
+    instance_names = easy_instance_names
+else:
+    instance_names = hard_instance_names
+#instance_names = {"rbg125a.tw":7936,	}
 file = open(saveFileName, "w")
 file.write("{")
 file.close()
-use_best_heuristic = 1
+use_best_heuristic = 0
 for instance_name in instance_names:
     if "old_instance_name" not in locals() or instance_name != old_instance_name:
         vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
@@ -2126,7 +2194,7 @@ for instance_name in instance_names:
     tree.service_time = service_time
     tsp_ub.create_model()
     
-    tree.add_all_split_points=0
+    tree.add_all_split_points = 0
     t0=time.time()
     if use_best_heuristic:
         tree.ub=instance_names[instance_name]+1
@@ -2134,6 +2202,8 @@ for instance_name in instance_names:
         tree.dynamic_discovery()
     else:
         tree.dynamic_discovery(startHeurIter)
+        if use_best_heuristic:
+            tree.ub=instance_names[instance_name]+1
         tree.branch_and_refine()
     t1=time.time()
     print ("___________________________________________________________\n")
