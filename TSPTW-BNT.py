@@ -2121,7 +2121,7 @@ if instance_choice == "easy":
 else:
     instance_names = hard_instance_names
 #instance_names = {"rbg125a.tw":7936,	}
-file = open(saveFileName, "w")
+file = open(saveFileName+instance_choice, "w")
 file.write("{")
 file.close()
 use_best_heuristic = 0
