@@ -2146,16 +2146,17 @@ easy_instance_names = {
 "rbg019d.tw":1356,	"rbg021.tw":4536,
 "rbg050a.tw":2953 , "rbg055a.tw": 3761, "rbg067a.tw": 4625,#"rbg125a.tw":7936
 }
-instance_choice = "easy"
+instance_choice = sys.argv[3]
 if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
 instance_names = {"rbg034a.tw":2222,}
-file = open(saveFileName+instance_choice, "w")
+saveFileName = saveFileName+instance_choice
+file = open(saveFileName, "w")
 file.write("{")
 file.close()
-use_best_heuristic = 1
+use_best_heuristic = int(sys.argv[4])
 for instance_name in instance_names:
     if "old_instance_name" not in locals() or instance_name != old_instance_name or 1:
         vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
