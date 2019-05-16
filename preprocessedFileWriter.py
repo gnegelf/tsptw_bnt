@@ -1382,7 +1382,7 @@ class Tree():
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         self.branch_history = {key:[] for key in tsp.x_names}
-        self.time_limit = 18000
+        self.time_limit = 10000
         self.cutFinder = cutFinder(self.tsp)
         self.count = 0
         self.root_count = 0
@@ -1402,8 +1402,7 @@ class Tree():
                 if node.lower_bound < minVal:
                     minInd = i
                     minVal = node.lower_bound
-            if  self.lb < minVal:
-                self.lb=minVal
+            self.lb=minVal
         if selection == 3:
             minInd = 0
             minVal= 100000000
@@ -1416,13 +1415,10 @@ class Tree():
                     minVal = len(node.fractionals)+fac*node.lower_bound
                 if node.lower_bound < minLb:
                     minLb = node.lower_bound
-            if self.lb < minVal:
-                self.lb = minLb
+            self.lb = minLb
         self.node_selection_time += time.time() - t0
         return self.open_nodes.pop(minInd)
     def branch_and_refine(self):
-        if self.use_best_heuristic:
-            self.ub = self.heuristic_ub
         t0=time.time()
         splitNodesForNonInteger = 1
         addCutForNonInteger = 1
@@ -1431,13 +1427,6 @@ class Tree():
         root_relaxation = 1
         initial_check = hasattr(self,'tsp_ub')
         cleanup=0
-        """
-        for i in self.tsp.adj_matrix:
-            for j in self.tsp.adj_matrix:
-                if (not self.tsp.precedence_graph[j].has_key(i) )and (not self.tsp.precedence_graph[i].has_key(j)) and i!=j:
-                    self.tsp.add_ste_cut([i,j])
-                    #print "cut added"
-        """
         while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
             self.lbs.append(self.lb)
             self.count += 1
@@ -1450,8 +1439,8 @@ class Tree():
             #splitCount = 0
             splitNodesForNonInteger = root_relaxation
             addCutForNonInteger = root_relaxation
-            #splitNodesForNonInteger = 0
-            if cleanup > 5 and 0:
+            splitNodesForNonInteger = 0
+            if cleanup > 5:
                 pop_indices=[]
                 print "cleaning up tree"
                 for i,node2 in enumerate(self.open_nodes):
@@ -1462,8 +1451,7 @@ class Tree():
                 print "removing %d nodes" % len(pop_indices)
                 time.sleep(3)
                 while (len(pop_indices)>0):
-                    delme = self.open_nodes.pop(pop_indices.pop(-1))
-                    del delme
+                    self.open_nodes.pop(pop_indices.pop(-1))
                 cleanup=0
                 
             
@@ -1483,8 +1471,7 @@ class Tree():
                         if node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
-                        delme = self.open_nodes.pop(pop_indices.pop(-1))
-                        del delme
+                        self.open_nodes.pop(pop_indices.pop(-1))
                     continue
                 else:
                     print "Heuristic did not find any solution."
@@ -1601,8 +1588,7 @@ class Tree():
                             if not node2.feasible or node2.lower_bound >= self.ub-0.99:#TODO: Adapt this to non integer objective
                                 pop_indices.append(i)
                         while (len(pop_indices)>0):
-                            delme = self.open_nodes.pop(pop_indices.pop(-1))
-                            del delme
+                            self.open_nodes.pop(pop_indices.pop(-1))
                         self.split_time += time.time()-t_find_split0
                         continue
             if not cutAdded and not splitNodes:
@@ -1657,8 +1643,7 @@ class Tree():
                     if not node2.feasible or node2.lower_bound >= self.ub:
                         pop_indices.append(i)
                 while (len(pop_indices)>0):
-                    delme = self.open_nodes.pop(pop_indices.pop(-1))
-                    del delme
+                    self.open_nodes.pop(pop_indices.pop(-1))
                 self.add_cut_time += time.time() - t_add_cut0 
                 continue
             
@@ -1674,8 +1659,7 @@ class Tree():
                     if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                         pop_indices.append(i)
                 while (len(pop_indices)>0):
-                    delme = self.open_nodes.pop(pop_indices.pop(-1))
-                    del delme
+                    self.open_nodes.pop(pop_indices.pop(-1))
             else:
                 #branching step
                 branch_var,branch_val = node.choose_branch_var()
@@ -1710,30 +1694,25 @@ class Tree():
     def dynamic_discovery(self,split_limit=10000):
         t0=time.time()
         #self.count=0
-        if self.use_best_heuristic:
-            self.ub = self.heuristic_ub
         timefeasible=0
         splits=0
         addCutForNonInteger = 1
         cleanup = 0
-        while (not timefeasible) and splits<split_limit:
+        while not timefeasible and splits<split_limit:
             addCutForNonInteger = 1
-            if split_limit<50 and splits > 0:
-                root_relax = 0
-            else:
-                root_relax = 1
-            while len(self.open_nodes)>0 and time.time()-t0 < self.time_limit:
+            root_relax = 1
+            while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
                 if len(self.open_nodes)>1:
                     root_relax=0
                 if root_relax:
                     self.root_count += 1
-                self.solution_node = 0
+                self.solution_node=0
                 self.count+=1
                 cutAdded = 0
                 addedCuts = 0
                 addCutForNonInteger = root_relax
                 
-                if cleanup > 20 and 0:
+                if cleanup > 20:
                     print "cleaning up tree"
                     pop_indices=[]
                     #pruning of tree
@@ -1744,8 +1723,7 @@ class Tree():
                             pop_indices.append(i)
                     print "removing %d nodes" % len(pop_indices)
                     while (len(pop_indices)>0):
-                        delme = self.open_nodes.pop(pop_indices.pop(-1))
-                        del delme
+                        self.open_nodes.pop(pop_indices.pop(-1))
                     cleanup=0
                 
                 self.conditional_print("Current lower bound: %f" % self.lb)
@@ -1795,8 +1773,7 @@ class Tree():
                         if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
-                        delme = self.open_nodes.pop(pop_indices.pop(-1))
-                        del delme
+                        self.open_nodes.pop(pop_indices.pop(-1))
                     self.add_cut_time += time.time()-t_cut_0
                     continue
                 
@@ -1813,12 +1790,11 @@ class Tree():
                         if not node2.feasible or node2.lower_bound >= self.ub-0.99:
                             pop_indices.append(i)
                     while (len(pop_indices)>0):
-                        delme = self.open_nodes.pop(pop_indices.pop(-1))
-                        del delme
+                        self.open_nodes.pop(pop_indices.pop(-1))
                 else:
                     #branching step
                     branch_var,branch_val = node.choose_branch_var()
-                    print "Dyn disc branching"
+                    print "branching"
                     f_1 = 1.0-branch_val
                     f_0 = branch_val
                     if self.tsp.update_duals:
@@ -1896,11 +1872,7 @@ class Tree():
                     P = P2
                 self.find_split_time += time.time() - t_find_split0
                 if timefeasible == 0:
-                    self.lb = self.ub
-                    if self.use_best_heuristic:
-                        self.ub = self.heuristic_ub
-                    else:
-                        self.ub = 100000
+                    self.ub = 100000
                     print "Splitting nodes"
                     if hasattr(self,'tsp_ub'):
                         print "Nodes split starting Heuristic"
@@ -1912,9 +1884,6 @@ class Tree():
                     
                     splits += 1
                     self.root = Tree_node(self,[])
-                    while len(self.open_nodes)>0:
-                        delme = self.open_nodes.pop(0)
-                        del delme
                     self.open_nodes = [self.root]
                     self.lbs.append(self.root.lower_bound)
                     if self.root.lower_bound > self.ub -0.99:
@@ -2098,13 +2067,34 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
             if retval:
                 TWs_changed=1
 
-  
+def writeData(file_name,TWs,distM,waitTime,direcotry_name ="AFGprocessed"):
+    
+    print "Writing "+file_name
+
+    file = open(direcotry_name+"/"+file_name, "w")
+
+    
+    file.write("%d\n"% len(TWs))
+    for row in distM:
+        myStr = ""
+        for val in row:
+            myStr += str(val) + " "
+        if len(myStr)>0:
+            myStr = myStr[:-1]
+        else:
+            myStr = " "
+        file.write(myStr+"\n")
+    for j in TWs:
+        file.write("%d %d \n" % (j[0],j[1]))
+    file.write("# Sum of service times: %d\n" % waitTime)
+    file.close()
+
 
 #"""
 #instance_name = "n150w60.001.txt"
 #vert_num,TWs,adj_matrix,service_time = readData(instance_name,"Dumas")
-dynamic_discovery = int(sys.argv[1])
-startHeurIter = int(sys.argv[2])
+dynamic_discovery = 0
+startHeurIter = 0
 if dynamic_discovery:
     saveFileName = "Results_dyn_disc"
 else:
@@ -2131,7 +2121,7 @@ hard_instance_names ={
 	"rbg193.tw":12547,
 "rbg086a.tw":8400,	"rbg201a.tw":12967,
 "rbg041a.tw":2598,	"rbg092a.tw":7160,	"rbg233.2.tw":14549,
-"rbg042a.tw":2772,	"rbg233.tw":15031 
+"rbg042a.tw":2772,	"rbg233.tw":15031 ,
 }
 easy_instance_names = {
 "rbg010a.tw":671,	"rbg020a.tw":4689,	"rbg027a.tw":5091,	
@@ -2146,81 +2136,75 @@ easy_instance_names = {
 "rbg019d.tw":1356,	"rbg021.tw":4536,
 "rbg050a.tw":2953 , "rbg055a.tw": 3761, "rbg067a.tw": 4625,#"rbg125a.tw":7936
 }
-instance_choice = "easy"
+instance_choice = "hard"
 if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
-instance_names = {"rbg034a.tw":2222,}
+#instance_names = {"rbg010a.tw":10032,}
 file = open(saveFileName+instance_choice, "w")
 file.write("{")
 file.close()
-use_best_heuristic = 1
+#use_best_heuristic = 1
 for instance_name in instance_names:
-    if "old_instance_name" not in locals() or instance_name != old_instance_name or 1:
-        vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
-        #print adj_matrix[28][1]
-        vert_num += 1
-        TWs.append([TWs[0][0],TWs[0][1]])
-        TWs[0][1]=0
-        #TWs.append([TWs[0][0],TWs[0][1]])
-        processed = [0]
-        toBeUpdated = [i for i in adj_matrix[0]]
-        adj_matrix[vert_num-1] = {}
-        #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-        
-        for i in  range(vert_num):
-            if adj_matrix[i].has_key(0):
-                adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
-            if adj_matrix[i].has_key(i):
-                adj_matrix[i].pop(i)
-        old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-        
-        vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFGprocessed")
-        #print adj_matrix[28][1]
-        vert_num += 1
-        TWs.append([TWs[0][0],TWs[0][1]])
-        TWs[0][1]=0
-        #TWs.append([TWs[0][0],TWs[0][1]])
-        processed = [0]
-        toBeUpdated = [i for i in adj_matrix[0]]
-        adj_matrix[vert_num-1] = {}
-        #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-        
-        for i in  range(vert_num):
-            if adj_matrix[i].has_key(0):
-                adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
-            if adj_matrix[i].has_key(i):
-                adj_matrix[i].pop(i)
-        for i in adj_matrix:
-            for j in adj_matrix[i].keys():
-                if adj_matrix[i][j] == 20000:
-                    adj_matrix[i].pop(j)
-        #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-        adj_matrix_tr={i:{} for i in adj_matrix}
-        for i in adj_matrix:
-            for j in adj_matrix[i]:
-                adj_matrix_tr[j][i]=adj_matrix[i][j]
-        
-        oldArcAmount=0
-        for i in adj_matrix:
-            oldArcAmount+=len(adj_matrix[i])
-        print "Total number of arcs before preprocessing: %d" % oldArcAmount
-        #process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-        
-        #adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
-        
-        g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-        processedArcAmount=0
-        for i in adj_matrix:
-            processedArcAmount+=len(adj_matrix[i])
-        print "Total number of arcs after preprocessing: %d" % processedArcAmount
-        #time.sleep(3)
-        print "Starting branch and bound process"
-        #time.sleep(30)
-        #blub-8
-        #"""
-        #nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
+    vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
+    #print adj_matrix[28][1]
+    vert_num += 1
+    TWs.append([TWs[0][0],TWs[0][1]])
+    TWs[0][1]=0
+    #TWs.append([TWs[0][0],TWs[0][1]])
+    processed = [0]
+    toBeUpdated = [i for i in adj_matrix[0]]
+    adj_matrix[vert_num-1] = {}
+    #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+    
+    for i in  range(vert_num):
+        if adj_matrix[i].has_key(0):
+            adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
+        if adj_matrix[i].has_key(i):
+            adj_matrix[i].pop(i)
+    old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+    adj_matrix_tr={i:{} for i in adj_matrix}
+    for i in adj_matrix:
+        for j in adj_matrix[i]:
+            adj_matrix_tr[j][i]=adj_matrix[i][j]
+    
+    oldArcAmount=0
+    for i in old_adj_matrix:
+        oldArcAmount+=len(old_adj_matrix[i])
+    print "Total number of arcs before preprocessing: %d" % oldArcAmount
+    process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+    
+    adjust_TWs(adj_matrix,adj_matrix_tr,TWs)
+    
+    g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
+    processedArcAmount=0
+    for i in adj_matrix:
+        processedArcAmount+=len(adj_matrix[i])
+    print "Total number of arcs after preprocessing: %d" % processedArcAmount
+    #adj_matrix=old_adj_matrix
+    adj_matrix.pop(vert_num-1)
+    TWs[0]=[0,TWs[-1][1]]
+    TWs.pop(-1)
+    distM=[[0 for i in adj_matrix]for j in adj_matrix]
+    for i in adj_matrix:
+        if adj_matrix[i].has_key(vert_num-1):
+            adj_matrix[i][0]=adj_matrix[i].pop(vert_num-1)
+        for j in adj_matrix:
+            if i==j:
+                distM[i][j]=0
+            else:
+                if j not in adj_matrix[i]:
+                    distM[i][j]=20000
+                else:
+                    distM[i][j]=adj_matrix[i][j]
+    #time.sleep(3)
+    print "Starting branch and bound process"
+    #time.sleep(3)
+    #blub-8
+    #"""
+    #nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
+    writeData(instance_name,TWs,distM,service_time,"AFGprocessed")
     
     
     
@@ -2229,50 +2213,7 @@ for instance_name in instance_names:
     
     
     
-    tsp = Tsp(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-    tsp_ub = Tsp_ub(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-    tsp.precedence_graph = g
-    tsp_ub.precedence_graph = g
-    tsp.old_adj_matrix=old_adj_matrix
-    tsp.adj_matrix_tr = adj_matrix_tr
-    tsp.update_duals=0
-    tsp.adapt_model=0
-    for i in tsp.nodes:
-        i.split_node(i.tw_ub)
-    tsp.update_duals=1
-    tsp.adapt_model=1
-    tsp.create_model()
-    tree = Tree(tsp,0)
-    tree.tsp_ub = tsp_ub
-    tree.service_time = service_time
-    tree.use_best_heuristic = use_best_heuristic
-    tsp_ub.create_model()
-    tree.heuristic_ub = instance_names[instance_name]+1
-    tree.add_all_split_points = 0
-    t0=time.time()
     
-    if dynamic_discovery:
-        tree.dynamic_discovery()
-    else:
-        tree.dynamic_discovery(startHeurIter)
-
-        tree.branch_and_refine()
-    t1=time.time()
-    print ("___________________________________________________________\n")
-    print "\n\nTotal time: %f\n\n" %(t1-t0)
-    print "Average lp time: %f" %(sum(tree.lp_times)/len(tree.lp_times))
-    print "Total lp time (includes part of the time of adding cuts/splitting): %f" % sum(tree.lp_times)
-    print "Average simplex iterations: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
-    print "Total number of nodes visited: %d" % tree.count
-    print "Node selection time: %f" % tree.node_selection_time
-    print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
-    print "Time spend on splitting nodes: %f" % tree.split_time
-    old_instance_name = instance_name
-    file = open(saveFileName, "a")
-    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d]," %(sum(tree.lp_times),
-               (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
-               (sum(tree.simp_iteras)/len(tree.simp_iteras))))
-    file.close()
 file = open(saveFileName, "a")
 file.write("}")
 file.close()
