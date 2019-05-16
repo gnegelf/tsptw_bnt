@@ -2151,7 +2151,7 @@ if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
-instance_names = {"rbg034a.tw":2222,}
+#instance_names = {"rbg034a.tw":2222,}
 saveFileName = saveFileName+instance_choice
 file = open(saveFileName, "w")
 file.write("{")
