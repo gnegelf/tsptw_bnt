@@ -1722,12 +1722,13 @@ class Tree():
                 root_relax = 0
             else:
                 root_relax = 1
+            self.solution_node = 0
             while len(self.open_nodes)>0 and time.time()-t0 < self.time_limit:
                 if len(self.open_nodes)>1:
                     root_relax=0
                 if root_relax:
                     self.root_count += 1
-                self.solution_node = 0
+                
                 self.count+=1
                 cutAdded = 0
                 addedCuts = 0
@@ -1806,7 +1807,7 @@ class Tree():
                 if len(node.fractionals) == 0 and node.lower_bound < self.ub-0.99:
                     print "Integer feasible tour without cycle found, objective: %f" % node.lower_bound
                     self.ub = node.lower_bound
-                    self.solution_node=node
+                    self.solution_node = node
                     pop_indices=[]
                     #pruning of tree
                     for i,node2 in enumerate(self.open_nodes):
@@ -1847,6 +1848,7 @@ class Tree():
                                 self.open_nodes.append(new_node1)
             #time.sleep(1)
             if self.solution_node == 0:
+                print "Found infeasibility"
                 break
             timefeasible = 1
             t_find_split0 = time.time()
@@ -1911,15 +1913,17 @@ class Tree():
                                 self.ub = tsp_ub.model.solution.get_objective_value()
                     
                     splits += 1
-                    self.root = Tree_node(self,[])
                     while len(self.open_nodes)>0:
                         delme = self.open_nodes.pop(0)
                         del delme
+                    self.root = Tree_node(self,[])
                     self.open_nodes = [self.root]
                     self.lbs.append(self.root.lower_bound)
                     if self.root.lower_bound > self.ub -0.99:
                         break
                     #self.ub = 100000
+                else:
+                    print "Optimal solution found"
 
 def tuplePathLengths(P,TWs,old_adj_matrix):
     #print P
@@ -2151,7 +2155,7 @@ if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
-#instance_names = {"rbg034a.tw":2222,}
+#instance_names = {"rbg042a.tw":2772,}
 saveFileName = saveFileName+instance_choice
 file = open(saveFileName, "w")
 file.write("{")
