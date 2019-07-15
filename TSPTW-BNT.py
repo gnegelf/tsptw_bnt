@@ -1361,6 +1361,10 @@ class Tree():
         self.psi_avg = 0
         self.reduced_cost_fixing = 1
         self.lp_times=[]
+        self.node_count = 1
+        self.refinement_count = 0
+        self.cut_count = 0
+        self.lp_time = 0.0
         self.lp_no_dual_times=[]
         self.simp_iteras=[]
         self.simp_nd_iteras=[]
@@ -1389,10 +1393,7 @@ class Tree():
         self.root_count = 0
         self.refinement = 0
         
-        self.node_count = 1
-        self.refinement_count = 0
-        self.cut_count = 0
-        self.lp_time = 0.0
+        
         
         
     def conditional_print(self,string):
