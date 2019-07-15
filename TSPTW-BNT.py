@@ -943,6 +943,7 @@ class Tree_node():
         feas = tsp.solve_model()
         self.updated_lp_relaxation = 1
         self.tree.lp_times.append((time.time()-t0))
+        self.lp_times += time.time()-t0
         self.tree.simp_iteras.append(model.solution.progress.get_num_iterations())
         model.parameters.advance.set(0)
         if not feas:
@@ -1391,6 +1392,7 @@ class Tree():
         self.node_count = 1
         self.refinement_count = 0
         self.cut_count = 0
+        self.lp_time = 0.0
         
         
     def conditional_print(self,string):
@@ -1443,7 +1445,7 @@ class Tree():
                     self.tsp.add_ste_cut([i,j])
                     #print "cut added"
         """
-        while len(self.open_nodes)>0 and time.time()-t0< self.time_limit:
+        while len(self.open_nodes)>0 and self.lp_time < self.time_limit:
             self.lbs.append(self.lb)
             self.count += 1
             if len(self.lbs)>80 and abs(self.lbs[-10]-self.lb) < 0.2:
@@ -1731,7 +1733,7 @@ class Tree():
             else:
                 root_relax = 1
             self.solution_node = 0
-            while len(self.open_nodes)>0 and time.time()-t0 < self.time_limit:
+            while len(self.open_nodes)>0 and self.lp_time < self.time_limit:
                 if len(self.open_nodes)>1:
                     root_relax=0
                 if root_relax:
