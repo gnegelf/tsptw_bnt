@@ -1388,6 +1388,11 @@ class Tree():
         self.root_count = 0
         self.refinement = 0
         
+        self.node_count = 1
+        self.refinement_count = 0
+        self.cut_count = 0
+        
+        
     def conditional_print(self,string):
         if self.count % self.print_interval == 0:
             print string
@@ -1448,9 +1453,9 @@ class Tree():
             splitNodes = 0
             addedCuts = 0
             #splitCount = 0
-            splitNodesForNonInteger = root_relaxation
+            #splitNodesForNonInteger = root_relaxation
             addCutForNonInteger = root_relaxation
-            #splitNodesForNonInteger = 0
+            splitNodesForNonInteger = 0
             if cleanup > 5 and 0:
                 pop_indices=[]
                 print "cleaning up tree"
@@ -1536,7 +1541,7 @@ class Tree():
             #Segment to split nodes, if nodes are split loop is continued
             if not cutAdded and (len(node.fractionals)==0 or splitNodesForNonInteger):
                 t_find_split0 = time.time()
-                if self.refinement ==0:
+                if self.refinement == 0:
                     P = findPaths(self.tsp,node.primal_y_values)
                     dual_value_locations=[]
                     while len(P)>0:
@@ -1581,6 +1586,7 @@ class Tree():
                                 P2[pathNode] = newPath
                         P = P2
                     if splitNodes > 0:
+                        self.refinement_count += 1
                         cleanup += 1
                         print "Splitting nodes"
                         if hasattr(self,'tsp_ub')and (not root_relaxation or len(node.fractionals)==0):
@@ -1645,6 +1651,7 @@ class Tree():
                         #    break
                     self.find_pi_sigma_time +=time.time()-t_pisigma_0
             if cutAdded or piSigmaCutAdded:
+                self.cut_count +=1
                 #cleanup += 1
                 t_add_cut0 = time.time()
                 pop_indices=[]
@@ -1677,6 +1684,7 @@ class Tree():
                     delme = self.open_nodes.pop(pop_indices.pop(-1))
                     del delme
             else:
+                self.node_count += 1
                 #branching step
                 branch_var,branch_val = node.choose_branch_var()
                 print "branching"
@@ -1785,6 +1793,7 @@ class Tree():
                             break
                         self.find_ste_time +=time.time()-t_ste_0
                 if cutAdded:
+                    self.cut_count += 1
                     cleanup += 1
                     t_cut_0 = time.time()
                     pop_indices=[]
@@ -1817,6 +1826,7 @@ class Tree():
                         delme = self.open_nodes.pop(pop_indices.pop(-1))
                         del delme
                 else:
+                    self.node_count += 1
                     #branching step
                     branch_var,branch_val = node.choose_branch_var()
                     print "Dyn disc branching"
@@ -1898,6 +1908,7 @@ class Tree():
                     P = P2
                 self.find_split_time += time.time() - t_find_split0
                 if timefeasible == 0:
+                    self.refinement_count += 1
                     self.lb = self.ub
                     if self.use_best_heuristic:
                         self.ub = self.heuristic_ub
@@ -2155,7 +2166,7 @@ if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
-#instance_names = {"rbg042a.tw":2772,}
+#instance_names = {"rbg034a.tw":2222,}
 saveFileName = saveFileName+instance_choice
 file = open(saveFileName, "w")
 file.write("{")
@@ -2260,7 +2271,7 @@ for instance_name in instance_names:
         tree.dynamic_discovery()
     else:
         tree.dynamic_discovery(startHeurIter)
-
+        tree.lb = 0.0
         tree.branch_and_refine()
     t1=time.time()
     print ("___________________________________________________________\n")
@@ -2273,10 +2284,16 @@ for instance_name in instance_names:
     print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
     print "Time spend on splitting nodes: %f" % tree.split_time
     old_instance_name = instance_name
+    number_of_nodes_in_graph = 0
+    number_of_arcs_in_graph = 0
+    for i in tree.tsp.nodes:
+        number_of_nodes_in_graph += len(i.interval_nodes)
+    for key,extended_arclist in tree.tsp.arc_dict.iteritems():
+        number_of_arcs_in_graph += len(extended_arclist)
     file = open(saveFileName, "a")
-    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d]," %(sum(tree.lp_times),
+    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d]," %(sum(tree.lp_times),
                (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
-               (sum(tree.simp_iteras)/len(tree.simp_iteras))))
+               (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph))
     file.close()
 file = open(saveFileName, "a")
 file.write("}")
