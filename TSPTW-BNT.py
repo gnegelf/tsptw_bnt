@@ -943,7 +943,7 @@ class Tree_node():
         feas = tsp.solve_model()
         self.updated_lp_relaxation = 1
         self.tree.lp_times.append((time.time()-t0))
-        self.lp_times += time.time()-t0
+        self.tree.lp_time += time.time()-t0
         self.tree.simp_iteras.append(model.solution.progress.get_num_iterations())
         model.parameters.advance.set(0)
         if not feas:
