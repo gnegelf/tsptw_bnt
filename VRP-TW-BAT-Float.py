@@ -188,7 +188,7 @@ class flowGraphNode():
     def maxSucc(self):
         maxi = 0.0
         #maxS = -1
-        for s,val in successors.iteritems():
+        for s,val in self.successors.iteritems():
             if val > maxi:
                 maxi = val
                 maxS = s
@@ -592,7 +592,8 @@ class VRP():
         unusedNodeDict ={depot:
                 flowGraphNode()
             }
-        arcDictFloat = []
+        unusedNodeDict[depot].inflow = self.vehicle_amount
+        arcDictFloat = {}
         
         for string,val in yStringList.iteritems():
             arcDictFloat[tuple([float(s) for s in re.split("[_]",string)[1:]])] = val
@@ -603,29 +604,28 @@ class VRP():
                 unusedNodeDict[arcL[0]] = flowGraphNode()
             if not unusedNodeDict.has_key(arcL[1]):
                 unusedNodeDict[arcL[1]] = flowGraphNode()
-            unusedNodeDict[arcL[0]].successors.append(arcL[1])
-            unusedNodeDict[arcL[1]].predecessors.append(arcL[0])
+            unusedNodeDict[arcL[0]].successors[(arcL[1])] = val
+            unusedNodeDict[arcL[1]].predecessors[arcL[0]] = val
             unusedNodeDict[arcL[1]].inflow += val
         S = [[] for i in range(self.vehicle_amount)]
         for i in range(self.vehicle_amount):
             succ = depot
-            S[i].append(succ)
+            S[i].append((succ[0],succ[1]/1000.0,succ[2]/1000.0))
             while len(unusedNodeDict[succ].successors) != 0:
                 prev = succ
                 succ = unusedNodeDict[succ].maxSucc()
-                S[i].append(succ)
-                if unusedNodeDict[succ].inflow <1.001:
-                    for pred in unusedNodeDict[succ]:
-                        unusedNodeDict[pred].successors.remove(succ)
-                    unusedNodeDict.remove(succ)
+                S[i].append((succ[0],succ[1]/1000.0,succ[2]/1000.0))
+                if unusedNodeDict[prev].inflow <0.001:
+                    for pred in unusedNodeDict[prev].predecessors:
+                        unusedNodeDict[pred].successors.pop(prev)
+                    unusedNodeDict.pop(prev)
                 else:
-                    unusedNodeDict[succ].inflow -= 1.0
-                    unusedNodeDict[prev].successors.remove(succ)
-                    unusedNodeDict[succ].predecessors.remove(prev)
-        return S    
-                
-        
-            
+                    unusedNodeDict[succ].inflow -= unusedNodeDict[prev].successors[succ]
+                    unusedNodeDict[prev].successors.pop(succ)
+                    unusedNodeDict[succ].predecessors.pop(prev)
+        #print S
+        #raw_input()
+        return S
     def solToCyclesYopt(self,yStringList,tol=0.001):
         arcListFloat = []
         for string in yStringList:
@@ -1366,6 +1366,7 @@ class Tree():
                 root  = self.open_nodes[0]
                 prev_root_lb = -51.0
             else:
+                sol = self.vrp.fracSolToPaths(root.primal_y_values)
                 split_points = self.vrp.findSplitPoints(sol)
                 if len(split_points)>0:
                     root_splits += 1
@@ -1616,7 +1617,7 @@ def write_line(filename,instance_name,data):
 instance_names = {
 "SimCologne_C_50_twLength_30_i_1_equalProfits.txt":-22,
 "SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
-#"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
+"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
 "SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
 "SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
 "SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
@@ -1677,7 +1678,7 @@ for dynamic_discovery in [0]:
         file.write("\n______________________________________\n")
         file.write(start_line)
         file.close()
-        use_best_heuristic = 0
+        use_best_heuristic = 1
         bat_unit = 1.0
         load_fac = bat_unit*2.5
         loading_speed = load_fac
