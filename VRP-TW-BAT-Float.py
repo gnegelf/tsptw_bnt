@@ -40,65 +40,6 @@ def nodeIdEq(tup1,tup2):
     else:
         return 0
 
-"""
-def solToCyclesY(yStringList,depot=0,tol=0.001):
-    arcListFloat=[]
-    for string in yStringList:
-        arcListFloat.append([float(s) for s in re.split("[_]",string)[1:]])
-    arcList = [[int(arc[0]),int(arc[1])]+arc[2:] for arc in arcListFloat]
-    #notS = range(1,n)
-    S = [[(depot,0,battery_capacity)]]
-    oS= []
-    while len(arcList)>0:
-        popIndices=[]
-        for i in range(len(arcList)):
-            if arcList[i][0] == S[len(S)-1][-1][0] and floatEqual(arcList[i][2],S[len(S)-1][-1][1]) and floatEqual(arcList[i][3], S[len(S)-1][-1][2]):
-                S[len(S)-1].append((arcList[i][1],arcList[i][4],arcList[i][5]))
-                popIndices.append(i)
-        if len(popIndices)== 0:
-            if len(S[-1]) == 1:
-                S.pop(-1)
-                break
-            S.append([(depot,0,battery_capacity)])
-            #break
-        while len(popIndices)>0:
-            arcList.pop(popIndices.pop(-1))
-    if len(arcList)>0:
-        firstArc = arcList.pop(0)
-        oS.append([(firstArc[0],firstArc[2],firstArc[3]),(firstArc[1],firstArc[4],firstArc[5])])
-        while len(arcList)>0:
-            popIndices=[]
-            for i in range(len(arcList)):
-                if arcList[i][0]== oS[len(oS)-1][-1][0] and floatEqual(arcList[i][2], oS[len(oS)-1][-1][1]) and floatEqual(arcList[i][3]- oS[len(oS)-1][-1][2]):
-                    oS[len(oS)-1].append((arcList[i][1],arcList[i][4],arcList[i][5]))
-                    popIndices.append(i)
-            if len(popIndices)== 0:
-                if len(arcList) > 0:
-                    oS.append(arcList.pop(0))
-                #break
-            while len(popIndices)>0:
-                arcList.pop(popIndices.pop(-1))
-    #check if any path in S contains a cycle
-    passCheck = 0
-    while passCheck == 0:
-        passCheck = 1
-        for q in range(len(S)):
-            path=S[q]
-            for i,node in enumerate(path):
-                for j in range(i+1,len(path)):
-                    if path[j] == node:
-                        passCheck = 0
-                        low=i
-                        high=j
-                        break
-                if not passCheck:
-                    break
-            if not passCheck:
-                oS.append([path[low+1:high+1]])
-                path=path[0:low]+path[high+1:len(path)]
-                
-    return S,oS
-"""
 def readData(file_name,directory_name ="AFG"):
     
     print "reading "+file_name
@@ -180,6 +121,19 @@ def arc_length(time,battery_level,head_tw,head_bw,tr_time,bat_delta1,bat_delta2,
     time_delta = load_time+tr_time
     bat_delta = min(battery_capacity,battery_level+bat_delta1+load_time*loading_speed)-battery_level+bat_delta2
     return time_delta,bat_delta,load_time
+
+def ub_arc_length(time,battery_level,head_tw,head_bw,tr_time,bat_delta1,bat_delta2,loading_speed,battery_capacity):
+    tr_bat = bat_delta1 + bat_delta2
+    if  bat_delta1+battery_level < -0.001:
+        print "Error battery level too low to return to depot"
+    forced_load_time = max(head_bw[0]-(battery_level+tr_bat),0)/loading_speed
+    forced_wait_time = max(head_tw[0]-(time+tr_time),0)
+    load_time=max(forced_load_time,forced_wait_time)
+    time_delta = load_time+tr_time
+    bat_delta = min(battery_capacity,battery_level+bat_delta1+load_time*loading_speed)-battery_level+bat_delta2
+    return time_delta,bat_delta,load_time
+
+
 class flowGraphNode():
     def __init__(self):
         self.inflow = 0.0
@@ -219,12 +173,15 @@ class VRP():
         self.break_path = 1
         
         self.nodes = [VRP_node(self,i,TWs[i][0],TWs[i][1],bat_intervals[i][0],bat_intervals[i][1]) for i in self.indices]
+        self.ub_nodes = [VRP_node(self,i,TWs[i][0],TWs[i][1],bat_intervals[i][0],bat_intervals[i][1]) for i in self.indices]
+        self.adapt_model = 0
         
         self.arc_dict = {}
+        self.o_arc_dict = {}
         for i in adj_matrix:
             for j in adj_matrix[i].keys():
                 time_delta,bat_delta,load_time = arc_length(self.nodes[i].interval_nodes[0].tw_interval[0],
-                                                  self.nodes[i].interval_nodes[0].battery_nodes[0].bat_interval[1],
+                                                  self.nodes[i].interval_nodes[0].battery_nodes[-1].bat_interval[1],
                                                   self.nodes[j].tw_interval,
                                                   self.nodes[j].bat_interval,
                                                   self.adj_matrix[i][j],
@@ -234,15 +191,26 @@ class VRP():
                                                   self.battery_capacity)
                 
                 if ((not self.nodes[j].interval_nodes[0].is_reachable(self.nodes[i].interval_nodes[0],time_delta) )
-                    or   (not self.nodes[j].interval_nodes[0].battery_nodes[0].is_reachable(self.nodes[i].interval_nodes[0].battery_nodes[0],bat_delta ))):
+                    or   (not self.nodes[j].interval_nodes[0].battery_nodes[0].is_reachable(self.nodes[i].interval_nodes[0].battery_nodes[-1],bat_delta ))):
                     adj_matrix[i].pop(j)
                 else:
                     self.arc_dict[(i,j)]=[]
-                    Arc(self.nodes[j].interval_nodes[0].battery_nodes[0],
-                            self.nodes[i].interval_nodes[0].battery_nodes[0])
-                    #if not arc.head.interval_node.is_lowest_reachable(arc.tail.interval_node,arc.arc_time):
-                    #    blub-8
-                
+                    self.o_arc_dict[(i,j)]=[]
+                    Arc(self.nodes[j].interval_nodes[0].battery_nodes[-1],
+                            self.nodes[i].interval_nodes[0].battery_nodes[-1])
+                    #if not arc.h
+        for i in self.nodes:
+            if i.name == 0:
+                continue
+            i.split_node_both(i.tw_interval[0],i.bat_interval[0],0)
+            i.split_node_both(i.tw_interval[1],i.bat_interval[0],0)
+        #"""
+        for i in self.ub_nodes:
+            if i.name ==0:
+                continue
+            i.split_ub_node(i.tw_interval[1],i.bat_interval[1])
+            i.split_ub_node(i.tw_interval[0],i.bat_interval[1])
+        #"""
         self.adj_matrix_tr = {i:{} for i in self.adj_matrix}
         for i in self.adj_matrix:
             for j in self.adj_matrix[i]:
@@ -265,6 +233,166 @@ class VRP():
         self.update_duals = start_params["update_duals"]
         self.vehicle_amount = start_params["vehicle_amount"]
         self.refine_heuristic = start_params["refine_heuristic"]
+    def solve_heuristic(self):
+        self.create_ub_graph()
+        self.create_ub_model()
+        self.ub_model.solve()
+        return self.ub_model.solution.get_objective_value()
+
+    @register_time
+    @register_calls
+    def create_ub_graph(self):
+        #clear old graph
+        for i in self.full_adj_matrix:
+            for j in self.full_adj_matrix[i]:
+                self.o_arc_dict[(i,j)]=[]
+        for vrp_node in self.ub_nodes:
+                for interval_node in vrp_node.interval_nodes:
+                    for bat_node in interval_node.battery_nodes:
+                        bat_node.ingoing_o_arcs = []
+                        bat_node.outgoing_o_arcs = []
+        count=0
+        for vrp_node in self.ub_nodes:
+            for vrp_head_name in self.full_adj_matrix[vrp_node.name]:
+                vrp_head = self.ub_nodes[vrp_head_name]
+                for interval_node in vrp_node.interval_nodes:
+                    for bat_node in interval_node.battery_nodes:
+                        time_delta,bat_delta,load_time = arc_length(interval_node.tw_interval[1],
+                                                  bat_node.bat_interval[0],
+                                                  self.ub_nodes[vrp_head.name].tw_interval,
+                                                  self.ub_nodes[vrp_head.name].bat_interval,
+                                                  self.full_adj_matrix[vrp_node.name][vrp_head.name],
+                                                  self.battery_from_depot[vrp_node.name],
+                                                  self.battery_from_depot[vrp_head.name],
+                                                  self.loading_speed,
+                                                  self.battery_capacity)
+                        
+                        is_reachable,interval_node_head = vrp_head.find_lowest_guaranteed_reachable(interval_node,time_delta)
+                        if is_reachable:
+                            additional_load_time = interval_node_head.tw_interval[1] - (interval_node.tw_interval[1]+time_delta)
+                            bat_delta = min(battery_capacity,bat_node.bat_interval[0]+self.battery_from_depot[vrp_node.name]+(load_time+
+                                        additional_load_time)*loading_speed)-bat_node.bat_interval[0]+self.battery_from_depot[vrp_head.name]
+                            is_reachable,bat_node_head = interval_node_head.find_maximal_guaranteed_reachable_battery_node(bat_node,bat_delta)
+                        if is_reachable:
+                            count = count +1
+                            
+                            #print (bat_node_head.name,bat_node.name)
+                            Arc(bat_node_head,bat_node,1)
+
+        #print count
+    @register_time
+    @register_calls
+    def create_ub_model(self,var_type='I'):
+        self.ub_const_num = 0
+        self.ub_const_name2idx={}
+        self.ub_idx2name = {}
+        self.ub_name2idx = {}
+        self.ub_x_names = []
+        self.ub_y_names = []
+        
+        self.ub_model = cplex.Cplex()
+        model = self.ub_model
+        model.set_results_stream(None)
+        model.set_log_stream(None)
+        model.parameters.advance.set(1)
+        model.set_warning_stream(None)
+        x_names = ["x_%d_%d" %(i,j) for i in self.indices for j in self.full_adj_matrix[i]]
+        if self.multivisit_model:
+            x_obj = [0 for i in self.indices for j in self.full_adj_matrix[i]]
+            self.ub_z_names = []
+            z_names = ["z_%d" %(i) for i in self.indices]
+            z_obj = [-self.profits[i] for i in self.indices]
+        else:
+            x_obj = [-self.profits[j] for i in self.indices for j in self.full_adj_matrix[i]]
+        y_names = ["y_%d_%d_%.3f_%.3f_%.3f_%.3f" % (arc.tail.name,arc.head.name,
+                                           arc.tail.id_ub[0],arc.tail.id_ub[1],arc.head.id_ub[0],arc.head.id_ub[1])
+                        for key,arc_list in self.o_arc_dict.iteritems() for arc in arc_list]
+        
+        self.ub_add_variables(x_names,[var_type]*len(x_names),x_obj,[0.0]*len(x_names),[1.0]*len(x_names),'x')
+        self.ub_x_num=len(x_names)
+        if self.multivisit_model:
+            self.ub_add_variables(z_names,['C']*len(z_names),z_obj,[0.0]*len(z_names),[1.0]*len(z_names),'z')
+        self.ub_add_variables(y_names,['C']*len(y_names),[0.0]*len(y_names),[0.0]*len(y_names),[1.0]*len(y_names),'y')
+        allvars = []
+        allrhs = []
+        allsenses = []
+        all_names = []
+        
+        if not self.multivisit_model:
+            for node in self.ub_nodes:
+                if node.name!=self.goal and node.name != self.depot:
+                    thevars = ["x_%d_%d" %(node.name,node2) for node2 in self.full_adj_matrix[node.name]]
+                    thecoefs = [1]*len(thevars)
+                    allvars.append(cplex.SparsePair(thevars,thecoefs))
+                    allsenses.append("L")
+                    allrhs.append(1.0)
+                    all_names.append("visit_max_once_%d" % node.name)
+                if node.name == self.depot:
+                    thevars = ["x_%d_%d" %(node.name,node2) for node2 in self.full_adj_matrix[node.name]]
+                    thecoefs = [1]*len(thevars)
+                    allvars.append(cplex.SparsePair(thevars,thecoefs))
+                    allsenses.append("L")
+                    allrhs.append(self.vehicle_amount)
+                    all_names.append("visit_max_once_%d" % node.name)
+        else:
+            for node in self.ub_nodes:
+                if node.name!=self.goal and node.name != self.depot:
+                    thevars = ["x_%d_%d" %(node.name,node2) for node2 in self.full_adj_matrix[node.name]]+["z_%d" % node.name]
+                    thecoefs = [-1 for node2 in self.full_adj_matrix[node.name]]+[1]
+                    allvars.append(cplex.SparsePair(thevars,thecoefs))
+                    allsenses.append("L")
+                    allrhs.append(0.0)
+                    all_names.append("calc_profits_%d" % node.name)
+                if node.name == self.depot:
+                    thevars = ["x_%d_%d" %(node.name,node2) for node2 in self.full_adj_matrix[node.name]]
+                    thecoefs = [1]*len(thevars)
+                    allvars.append(cplex.SparsePair(thevars,thecoefs))
+                    allsenses.append("L")
+                    allrhs.append(self.vehicle_amount)
+                    all_names.append("visit_max_once_%d" % node.name)
+                    
+        
+        for node in self.ub_nodes:
+            for interval_node in node.interval_nodes:
+                for bat_node in interval_node.battery_nodes:
+                    if node.name != self.goal and node.name !=self.depot:
+                        thevars = ["y_%d_%d_%.3f_%.3f_%.3f_%.3f" % (arc.tail.name,arc.head.name,
+                                               arc.tail.id_ub[0],arc.tail.id_ub[1],arc.head.id_ub[0],arc.head.id_ub[1])
+                                    for arc in bat_node.outgoing_o_arcs]
+                        
+                        thecoefs = [-1]*len(bat_node.outgoing_o_arcs)
+                        
+                            
+                        #allvars.append(cplex.SparsePair(thevars,thecoefs))
+                        #allsenses.append("E")
+                        #allrhs.append(0.0)
+                        #all_names.append("goout_%d_%d" %(node.name,interval_node.id_ub))
+                        
+                        thevars += ["y_%d_%d_%.3f_%.3f_%.3f_%.3f" % (arc.tail.name,arc.head.name,
+                                               arc.tail.id_ub[0],arc.tail.id_ub[1],arc.head.id_ub[0],arc.head.id_ub[1])
+                                    for arc in bat_node.ingoing_o_arcs]
+                        
+                        thecoefs += [1]*len(bat_node.ingoing_o_arcs)
+        
+                            
+                        allvars.append(cplex.SparsePair(thevars,thecoefs))
+                        allsenses.append("E")
+                        allrhs.append(0.0)
+                        all_names.append("flow_%d_%.3f_%.3f" %(node.name,bat_node.id_ub[0],bat_node.id_ub[1]))
+        
+        for i,j in self.o_arc_dict:
+            thevars = ["y_%d_%d_%.3f_%.3f_%.3f_%.3f" % (arc.tail.name,arc.head.name,
+                                           arc.tail.id_ub[0],arc.tail.id_ub[1],arc.head.id_ub[0],arc.head.id_ub[1])
+                       for arc in self.o_arc_dict[i,j]]
+            thecoefs = [1]*len(thevars)
+            thevars += ["x_%d_%d" %(i,j)]
+            thecoefs += [-1]
+            allvars.append(cplex.SparsePair(thevars,thecoefs))
+            allsenses.append("E")
+            allrhs.append(0.0)
+            all_names.append("arcuse_%d_%d" %(i,j))
+        
+        self.ub_add_constraints(all_names,allvars,allsenses,allrhs)
     def create_model(self,var_type='C'):
         self.const_num = 0
         self.const_name2idx={}
@@ -275,8 +403,8 @@ class VRP():
         
         self.model = cplex.Cplex()
         model = self.model
-        model.set_results_stream(None)
-        model.set_log_stream(None)
+        #model.set_results_stream(None)
+        #model.set_log_stream(None)
         model.parameters.advance.set(1)
         model.set_warning_stream(None)
         x_names = ["x_%d_%d" %(i,j) for i in self.indices for j in self.adj_matrix[i]]
@@ -451,6 +579,12 @@ class VRP():
                                                      senses = allsenses, rhs = allrhs)
         self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
         self.const_num += len(all_names)
+    def ub_add_constraints(self,all_names,allvars,allsenses,allrhs):
+        old_inds=self.ub_const_num
+        self.ub_model.linear_constraints.add(names=all_names,lin_expr = allvars, 
+                                                     senses = allsenses, rhs = allrhs)
+        self.ub_const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
+        self.ub_const_num += len(all_names)
     def add_variables(self,all_names,all_types,all_obj,all_lb,all_ub,var_type):
         old_inds=self.model.variables.get_num()
         self.model.variables.add(names = all_names,
@@ -463,6 +597,18 @@ class VRP():
         self.name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
         self.idx2name.update({old_inds+j:name for j,name in enumerate(all_names)})
         self.var_num = len(self.name2idx)
+    def ub_add_variables(self,all_names,all_types,all_obj,all_lb,all_ub,var_type):
+        old_inds=self.ub_model.variables.get_num()
+        self.ub_model.variables.add(names = all_names,
+                            types=all_types,obj=all_obj,
+                            lb = all_lb,ub = all_ub)
+        if var_type=='x':
+            self.ub_x_names += all_names
+        if var_type=='y':
+            self.ub_y_names += all_names
+        self.ub_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
+        self.ub_idx2name.update({old_inds+j:name for j,name in enumerate(all_names)})
+        self.ub_var_num = len(self.ub_name2idx)
     def change_variable_name(self,old_var_name,new_var_name):
         self.model.variables.set_names(old_var_name,new_var_name)
         self.idx2name[self.name2idx[old_var_name]] = new_var_name
@@ -564,7 +710,7 @@ class VRP():
         split_points = []
         if cycle[0]==cycle[-1]:
             cycle.pop(-1)
-        #print cycle
+        print cycle
         for startIndex in range(len(cycle)):
             bat = self.nodes[cycle[startIndex]].bat_interval[1]
             time = self.nodes[cycle[startIndex]].tw_interval[0]
@@ -670,9 +816,9 @@ class VRP():
             if not added:
                 oS.append(arcL)
                 appendedArcL += 1
-        for i in range(self.vehicle_amount):
-            if len(insertedCustomers[i]) < len(S[i])-2:
-                path = S[i]
+        for k in range(self.vehicle_amount):
+            if len(insertedCustomers[k]) < len(S[k])-2:
+                path = S[k]
                 cycleFound = 0
                 for i,node in enumerate(path):
                     for j in range(i+1,len(path)):
@@ -684,8 +830,8 @@ class VRP():
                     if cycleFound:
                         break
                 if cycleFound:
-                    oS.append([path[low:high+1]])
-                    S[i] = path[0:low]+path[high+1:len(path)]
+                    oS.append(path[low:high+1])
+                    S[k] = path[0:low]+path[high+1:len(path)]
                 else:
                     print "Error customer tracking predicted cycle, but no cycle found"
                     print path
@@ -726,13 +872,15 @@ class VRP():
 #class for arcs between interval nodes adding itself to the respective in- and outgoing lists
 #and also to the arc dictionary of the vrp class
 class Arc():
-    def __init__(self,head,tail):
+    def __init__(self,head,tail,is_for_ub=0):
         self.head = head
-        self.head.ingoing_arcs.append(self)
+        
         self.tail = tail
-        self.tail.outgoing_arcs.append(self)
         vrp = tail.interval_node.vrp_node.vrp
-        self.arc_time,self.arc_bat,lt = arc_length(tail.interval_node.tw_interval[0],
+        if not is_for_ub:
+            self.head.ingoing_arcs.append(self)
+            self.tail.outgoing_arcs.append(self)
+            self.arc_time,self.arc_bat,lt = arc_length(tail.interval_node.tw_interval[0],
                                                           tail.bat_interval[1],
                                                           head.interval_node.vrp_node.tw_interval,
                                                           head.interval_node.vrp_node.bat_interval,
@@ -741,7 +889,20 @@ class Arc():
                                                           vrp.battery_from_depot[head.name],
                                                           vrp.loading_speed,
                                                           vrp.battery_capacity)
-        self.tail.interval_node.vrp_node.vrp.arc_dict[tail.name,head.name].append(self)
+            self.tail.interval_node.vrp_node.vrp.arc_dict[tail.name,head.name].append(self)
+        else:
+            self.head.ingoing_o_arcs.append(self)
+            self.tail.outgoing_o_arcs.append(self)
+            self.arc_time,self.arc_bat,lt = arc_length(tail.interval_node.tw_interval[1],
+                                                          tail.bat_interval[0],
+                                                          head.interval_node.vrp_node.tw_interval,
+                                                          head.interval_node.vrp_node.bat_interval,
+                                                          vrp.full_adj_matrix[tail.name][head.name],
+                                                          vrp.battery_from_depot[tail.name],
+                                                          vrp.battery_from_depot[head.name],
+                                                          vrp.loading_speed,
+                                                          vrp.battery_capacity)
+            self.tail.interval_node.vrp_node.vrp.o_arc_dict[tail.name,head.name].append(self)
 
 
 #class for nodes in the original vrp-graph containing a subset of nodes of the time expanded graph
@@ -762,7 +923,48 @@ class VRP_node():
             if i.id == ID:
                 return 1
         return 0
+    def split_ub_node(self,split_point_tw,split_point_bat):
+        if self.name == self.vrp.goal:
+            return 1
+        tw_idx,split_tw = self.find_tw_index_ub(split_point_tw)
+        if split_tw:
+            old_tw_idx = tw_idx+1
+        else:
+            old_tw_idx = tw_idx
+        #print tw_idx
+        #print self
+        
+        bat_idx,split_bat = self.find_bat_index_ub(split_point_bat,tw_idx)
+        
+        
+        if split_bat:
+            new_bat_idx = bat_idx+1
+        else:
+            new_bat_idx = bat_idx
+        if split_bat+split_tw < 1:
+            return 0
+            print "Error neither battery window nor time_window split"
+            
+        old_lb_tw = self.interval_nodes[tw_idx].tw_interval[0]
+        old_ub_bat = self.interval_nodes[tw_idx].battery_nodes[bat_idx].bat_interval[1]
+        
+        if split_tw:
+            self.interval_nodes.insert(tw_idx,Interval_node(self.name,[old_lb_tw,split_point_tw],self,self.interval_nodes[tw_idx].is_tw_lb(),0))
+            for bat_node in self.interval_nodes[old_tw_idx].battery_nodes:
+                self.interval_nodes[tw_idx].battery_nodes.append(Battery_node(self.name,
+                                   list(bat_node.bat_interval),self.interval_nodes[tw_idx],bat_node.is_bat_lb(),bat_node.is_bat_ub()))
+        if split_bat:
+            self.interval_nodes[tw_idx].battery_nodes.insert(new_bat_idx,
+                           Battery_node(self.name,[split_point_bat,old_ub_bat],self.interval_nodes[tw_idx],
+                                        0,self.interval_nodes[tw_idx].battery_nodes[bat_idx].is_bat_ub()))
+        if split_tw:
+            self.interval_nodes[old_tw_idx].is_lb=0
+            self.interval_nodes[old_tw_idx].tw_interval[0] = split_point_tw
+        if split_bat:
+            self.interval_nodes[tw_idx].battery_nodes[bat_idx].is_ub = 0
+            self.interval_nodes[tw_idx].battery_nodes[bat_idx].bat_interval[1] = split_point_bat
     def split_node_both(self,split_point_tw,split_point_bat,dual_value_locations=[]):
+        self.vrp.ub_nodes[self.name].split_ub_node(split_point_tw,split_point_bat)
         if self.name == self.vrp.goal:
             return 1
         tw_idx,split_tw = self.find_tw_index(split_point_tw)
@@ -800,8 +1002,6 @@ class VRP_node():
         if split_bat:
             self.interval_nodes[new_tw_idx].battery_nodes[old_bat_idx].is_lb = 0
             self.interval_nodes[new_tw_idx].battery_nodes[old_bat_idx].bat_interval[0] = split_point_bat
-
-        
         
         node_counter = 0
         bat_idx_reached = 0
@@ -882,7 +1082,7 @@ class VRP_node():
                 arc_index += 1
             for i in pop_indices:
                 self.interval_nodes[tw_idx].battery_nodes[idx].ingoing_arcs.pop(i)
-        
+                    
         new_arc_list=[]
         #ToDo maybe optimize breaks for not testing too many nodes
         for node_index in self.vrp.adj_matrix[self.name]:
@@ -902,7 +1102,6 @@ class VRP_node():
                                                           self.vrp.loading_speed,
                                                           self.vrp.battery_capacity)
                     #print (arc_time,arc_bat)
-                    
                     #print (self.interval_nodes[new_tw_idx].tw_interval,vrp_node_head.tw_interval)
                     is_reachable,new_interval_node_head = self.vrp.nodes[vrp_node_head.name].find_lowest_reachable(self.interval_nodes[new_tw_idx],
                                                         arc_time)
@@ -933,8 +1132,7 @@ class VRP_node():
                             new_arc_list.append( 
                                         Arc(new_head,bat_node)
                                 )
-                
-
+        
         if self.vrp.adapt_model:
             for new_arc in new_arc_list:             
                 #print "new_arc: %d,%d,%d,%d" %(new_arc.tail.name, new_arc.head.name,new_arc.tail.id,new_arc.head.id)
@@ -968,6 +1166,20 @@ class VRP_node():
                     return i,1
                 
             return -1,0
+    def find_tw_index_ub(self,split_point,tol=0.001):
+        if split_point < self.tw_lb-tol:
+            print ("Error: split point outside of time window (less)")
+            return 0,0
+        else:
+            if split_point > self.tw_ub+tol:
+                print ("Error: split point outside of time window (larger)")
+            for i,i_node in enumerate(self.interval_nodes):
+                if i_node.tw_interval[1]+tol > split_point and i_node.tw_interval[1]-tol < split_point:
+                    return i,0
+                if i_node.tw_interval[1]+tol > split_point and i_node.tw_interval[0]+tol-2*tol*(i_node.is_tw_lb())< split_point:
+                    return i,1
+            return -1,0
+        
     def find_bat_index(self,split_point,tw_index,tol=0.001):
         if split_point < self.bat_lb-tol:
             print ("Error: split point outside of battery window (less)")
@@ -979,25 +1191,30 @@ class VRP_node():
             for i,i_node in enumerate(self.interval_nodes[tw_index].battery_nodes):
                 if  i_node.bat_interval[1]+tol > split_point and i_node.bat_interval[1]-tol < split_point:
                     return i,0
-                if i_node.bat_interval[0]+tol-2*tol*(i_node.is_bat_lb()) < split_point and i_node.bat_interval[1]+tol > split_point:
+                if i_node.bat_interval[1]+tol > split_point and i_node.bat_interval[0]+tol-2*tol*(i_node.is_bat_lb()) < split_point :
                     return i,1
-                
-
-    def find_index_ub(self,split_point,tol=0.001):
-        if split_point < self.tw_lb-tol:
-            print ("Error: split point outside of time window (less)")
-            return 0
+    def find_bat_index_ub(self,split_point,tw_index,tol=0.001):
+        if split_point < self.bat_lb-tol:
+            print ("Error: split point outside of battery window (less)")
+            return 0,0
         else:
-            if split_point > self.tw_ub+tol:
-                print ("Error: split point outside of time window (larger)")
-            for i,i_node in enumerate(self.interval_nodes):
-                if (i_node.interval[0]+tol < split_point and i_node.interval[1]-tol+2*tol*(i_node.is_tw_ub())> split_point 
-                     and i_node.interval[1]-tol > split_point):
-                    return i
-            return -1
+            if split_point > self.bat_ub+tol:
+                print ("Error: split point outside of battery window (larger)")
+                return 0,0
+            for i,i_node in enumerate(self.interval_nodes[tw_index].battery_nodes):
+                if  i_node.bat_interval[0]+tol > split_point and i_node.bat_interval[0]-tol < split_point:
+                    return i,0
+                if i_node.bat_interval[0]+tol < split_point and i_node.bat_interval[1]-tol+2*tol*(i_node.is_bat_ub()) > split_point:
+                    return i,1
+            return -1,0
     def find_lowest_reachable(self,node,step):
         for interval_node in self.interval_nodes:
             if interval_node.is_lowest_reachable(node,step):
+                return 1,interval_node
+        return 0,-1
+    def find_lowest_guaranteed_reachable(self,node,step):
+        for interval_node in self.interval_nodes:
+            if interval_node.is_lowest_guaranteed_reachable(node,step):
                 return 1,interval_node
         return 0,-1  
 
@@ -1014,6 +1231,7 @@ class Interval_node():
     def __init__(self,name,tw_interval,VRP_node,is_tw_lb,is_tw_ub,tol=0.001,bat_interval=[]):
         self.name = name
         self.id = tw_interval[0]
+        self.id_ub = tw_interval[1]
         self.tw_interval = tw_interval
         self.bat_interval = bat_interval
         self.vrp_node = VRP_node
@@ -1029,37 +1247,60 @@ class Interval_node():
         interv_tw2= [(not self.is_tw_lb())*self.tw_interval[0]-tol,self.tw_interval[1]-2*tol+4*tol*self.is_tw_ub()]
         #print interv_tw1
         #print interv_tw2
-        return has_intersection(interv_tw1,interv_tw2)  
+        return has_intersection(interv_tw1,interv_tw2)
+    def is_reachable_from_ub(self,node,shift_tw,tol=0.001):
+        return node.tw_interval[1]+shift_tw < self.tw_interval[1]+tol
     def is_tw_lb(self,tol=0.001):
         return self.is_lb
     def is_tw_ub(self,tol=0.001):
         return self.is_ub
     def is_lowest_reachable(self,node,step_tw,tol=0.001):
         interv_tw=(node.tw_interval[0]+step_tw,node.tw_interval[1]-2*tol+4*tol*node.is_tw_ub()+step_tw)
-        """
-        if not (self.is_reachable(node,step_tw) and (
-                self.is_tw_lb() or not has_intersection((0,self.tw_interval[0]-tol),interv_tw))):
-            print "head interval: %d,%d" % tuple(self.tw_interval)
-            print "shifted tw_interval: %f,%f" % interv_tw
-            print has_intersection((0,self.tw_interval[0]-tol),interv_tw)
-            print self.is_reachable(node,step_tw)
-        """
         return (self.is_reachable(node,step_tw) and (
                 self.is_tw_lb() or not has_intersection((0,self.tw_interval[0]-tol),interv_tw)))
+    def is_lowest_guaranteed_reachable(self,node,step_tw,tol=0.001):
+        arrTime = node.tw_interval[1] +step_tw
+        #interv_tw=(node.tw_interval[0]+step_tw,node.tw_interval[1]-2*tol+4*tol*node.is_tw_ub()+step_tw)
+        #return (self.is_reachable_from_ub(node,step_tw) and (
+        #        self.is_tw_lb() or not has_intersection((0,self.tw_interval[0]-tol),interv_tw)))
+        return (self.is_reachable_from_ub(node,step_tw) and (
+                self.is_tw_lb() or arrTime > self.tw_interval[0]+tol))
     def find_maximal_reachable_battery_node(self,battery_node,bat_step):
         for bat_node in self.battery_nodes:
             if bat_node.is_maximal_reachable_battery_node(battery_node,bat_step):
                 return 1,bat_node
         return 0,-1
-
+    def find_maximal_guaranteed_reachable_battery_node(self,battery_node,bat_step):
+        for bat_node in self.battery_nodes:
+            if bat_node.is_maximal_guaranteed_reachable_battery_node(battery_node,bat_step):
+                return 1,bat_node
+        return 0,-1
+"""
+for node in vrp.nodes:
+    node.interval_nodes[0].is_lb = 0
+    node.interval_nodes.insert(0,Interval_node(node.name,
+    [node.tw_interval[0],node.tw_interval[0]],node,0,1))
+    for bat_node in node.interval_nodes[1].battery_nodes:
+        node.interval_nodes[0].battery_nodes.append(Battery_node(node.name,
+        list(bat_node.bat_interval),
+        node.interval_nodes[0],bat_node.is_bat_lb,
+        bat_node.is_bat_ub()))
+    for inode in node.interval_nodes:
+        inode.battery_nodes[0].is_bat_lb = 0
+        inode.battery_nodes.append(Battery_node(node.name,[node.bat_interval[1],
+                        node.bat_interval[1]],inode,0,1))
+"""
 class Battery_node():
     def __init__(self,name,bat_interval,interval_node,is_bat_lb,is_bat_ub,tol=0.001):
         self.name = name
         self.id = (interval_node.id,bat_interval[-1])
+        self.id_ub = (interval_node.id_ub,bat_interval[0])
         self.bat_interval = bat_interval
         self.interval_node = interval_node
         self.ingoing_arcs = []
         self.outgoing_arcs = []
+        self.ingoing_o_arcs = []
+        self.outgoing_o_arcs = []
         self.is_ub = is_bat_ub
         self.is_lb = is_bat_lb
         self.big_num = 100000
@@ -1067,7 +1308,11 @@ class Battery_node():
         #print self.bat_interval
         interv_bat1=[node.bat_interval[0]+shift_bat+2*tol-4*tol*node.is_bat_lb(),node.bat_interval[1]+shift_bat]
         interv_bat2=[self.bat_interval[0]+2*tol-4*tol*self.is_bat_lb(),(not self.is_bat_ub())*self.big_num+self.bat_interval[1]+tol]
-        return  has_intersection(interv_bat1,interv_bat2)  
+        return  has_intersection(interv_bat1,interv_bat2)
+    def is_reachable_from_lb(self,node,shift_bat,tol=0.001):
+        #print self.bat_interval
+        return node.bat_interval[0]+shift_bat > self.bat_interval[0]-tol
+
     def is_bat_lb(self,tol=0.001):
         return self.is_lb
     def is_bat_ub(self,tol=0.001):
@@ -1077,6 +1322,14 @@ class Battery_node():
         return self.is_reachable(node,step_bat) and (
                         self.is_bat_ub() or not has_intersection((self.bat_interval[1]+tol,self.big_num),interv_bat)
                         )
+    def is_maximal_guaranteed_reachable_battery_node(self,node,step_bat,tol=0.001):
+        arrBat = node.bat_interval[0]+ step_bat
+        #interv_bat=(node.bat_interval[0]+step_bat+2*tol-4*tol*node.is_bat_lb(),node.bat_interval[1]+step_bat)
+        #return self.is_reachable_from_lb(node,step_bat) and (
+        #                self.is_bat_ub() or not has_intersection((self.bat_interval[1]+tol,self.big_num),interv_bat))
+        return self.is_reachable_from_lb(node,step_bat) and (
+                        self.is_bat_ub() or arrBat < self.bat_interval[1]-tol)
+        
 class Tree_node():
     def __init__(self,tree,branches,dual_values_model=0,dual_values_branches=0,primal_values = 0,slacks = 0,red_costs = 0):
         self.tree = tree
@@ -1086,6 +1339,10 @@ class Tree_node():
         self.branch_lin_exprs = [branch.lin_expr for branch in self.branches]
         self.branch_senses = [branch.sense for branch in self.branches]
         self.branch_rhs = [branch.rhs for branch in self.branches]
+        self.branch_ubs = [(branch.var,0) for branch in self.branches if abs(branch.rhs) < 0.001]
+        self.branch_lbs = [(branch.var,1) for branch in self.branches if abs(branch.rhs-1) < 0.001]
+        self.restore_ubs = [(branch.var,1) for branch in self.branches if abs(branch.rhs) < 0.001]
+        self.restore_lbs = [(branch.var,0) for branch in self.branches if abs(branch.rhs) < 0.001]
         self.dual_values_model = dual_values_model
         self.dual_values_branches = dual_values_branches
         self.primal_values = primal_values
@@ -1106,25 +1363,44 @@ class Tree_node():
         vrp = self.tree.vrp
         model = vrp.model
         oldLen = len(self.branches)
-        
-        model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,senses = self.branch_senses,rhs = self.branch_rhs)
-        if self.tree.vrp.update_duals and self.dual_values_model != 0:
-            model.parameters.advance.set(1)
-            model.start.set_start(col_status=[],row_status=[],
-                                  row_dual=self.dual_values_model+self.dual_values_branches,col_primal=[],row_primal=[],col_dual=[])
-            feas = vrp.solve_model()
-            #raw_input()
+        if 0:
+            model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,senses = self.branch_senses,rhs = self.branch_rhs)
+            if self.tree.vrp.update_duals and self.dual_values_model != 0:
+                model.parameters.advance.set(1)
+                model.start.set_start(col_status=[],row_status=[],
+                                      row_dual=self.dual_values_model+self.dual_values_branches,col_primal=[],row_primal=[],col_dual=[])
+                feas = vrp.solve_model()
+                #raw_input()
+            else:
+                #raw_input()
+                feas = vrp.solve_model()
         else:
-            #raw_input()
-            feas = vrp.solve_model()
-        
+            if len(self.branch_lbs)>0:
+                model.variables.set_lower_bounds(self.branch_lbs)
+            if len(self.branch_ubs)>0:  
+                model.variables.set_upper_bounds(self.branch_ubs)
+            if self.tree.vrp.update_duals and self.dual_values_model != 0:
+                model.parameters.advance.set(1)
+                model.start.set_start(col_status=[],row_status=[],
+                                      row_dual=self.dual_values_model,col_primal=[],row_primal=[],col_dual=[])
+                feas = vrp.solve_model()
+                    #raw_input()
+            else:
+                #raw_input()
+                feas = vrp.solve_model()
         #model.parameters.preprocessing.presolve.set(0)
         
         self.updated_lp_relaxation = 1
         model.parameters.advance.set(0)
         if not feas:
             self.lower_bound = 1000000
-            model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
+            if 0:
+                model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
+            else:
+                if len(self.restore_lbs)>0:
+                    model.variables.set_lower_bounds(self.restore_lbs)
+                if len(self.restore_ubs)>0:
+                    model.variables.set_upper_bounds(self.restore_ubs)
             return 0
         else:
             solution = model.solution
@@ -1147,7 +1423,13 @@ class Tree_node():
                         if self.primal_values[self.tree.vrp.name2idx[name]]>tol}
             #else:
             #    self.primal_y_values = {}
-        model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
+        if 0:
+            model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
+        else:
+            if len(self.restore_lbs)>0:
+                model.variables.set_lower_bounds(self.restore_lbs)
+            if len(self.restore_ubs)>0:
+                model.variables.set_upper_bounds(self.restore_ubs)
         #self.tree.total_relaxation_time += time.time() - t0
         return 1
     def is_x_integer(self):
@@ -1212,7 +1494,7 @@ class Branch():
         self.name= var + str(rhs)
         self.sense = sense
         self.rhs = rhs
-        self.lin_expr = cplex.SparsePair([var],[1])  
+        self.lin_expr = cplex.SparsePair([var],[1])
     def __repr__(self):
         return self.var +" sense: " +(self.sense)
     def __str__(self):
@@ -1284,15 +1566,15 @@ class Tree():
         f_1 = 1.0-branch_val
         f_0 = branch_val
         if self.vrp.update_duals:
-            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)],
+            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'E',0.0)],
                                                                 node.dual_values_model,
                                                                 node.dual_values_branches+[0.0]),
-                             Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)],
+                             Tree_node(node.tree,node.branches+[Branch(branch_var,'E',1.0)],
                                                                 node.dual_values_model,
                                                                 node.dual_values_branches+[0.0])]
         else:
-            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
-                             Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]  
+            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'E',0.0)]),
+                             Tree_node(node.tree,node.branches+[Branch(branch_var,'E',1.0)])]  
         if new_node_list[0].feasible:
             c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
         else:
@@ -1310,8 +1592,12 @@ class Tree():
     @register_calls
     def remove_shortCycles(self,shortCycles):
         split_points = []
+        #print "shortCycles before"
+        #print shortCycles
         for S in shortCycles:
             cy= [s[0] for s in S]
+            #print "extracted cycle"
+            #print cy
             split_points += self.vrp.findSplitPointsToBreakCycle(cy)
             #self.vrp.add_ste_cut(cy)
         self.adapt_vrp_graph(split_points)
@@ -1395,6 +1681,11 @@ class Tree():
         prev_root_lb = self.root.lower_bound
         if self.vrp.refine_heuristic:
             self.splitAtRoot()
+            heur_sol_val = self.vrp.solve_heuristic()
+            if heur_sol_val < self.ub:
+                print "Heuristic found new upper bound: %.2f" % heur_sol_val
+                self.ub = heur_sol_val
+        #return
         while ( len(self.open_nodes)>0) and (time.time()-t0 < self.time_limit):
             self.count+=1
             self.conditional_print("Current lower bound: %f" % (self.lb))
@@ -1433,7 +1724,11 @@ class Tree():
                             print str(split_points)
                             print split_points
                             print node.primal_y_values
-                            time.sleep(10) 
+                            time.sleep(10)
+                        heur_sol_val = self.vrp.solve_heuristic()
+                        if heur_sol_val < self.ub:
+                            print "Heuristic found new upper bound: %.2f" % heur_sol_val
+                            self.ub = heur_sol_val
                     else:
                         self.branch(node)
                     continue
@@ -1462,7 +1757,11 @@ class Tree():
                     print str(sol)
                     print split_points
                     print node.primal_y_values
-                    time.sleep(10) 
+                    time.sleep(10)
+                    heur_sol_val = self.vrp.solve_heuristic()
+                    if heur_sol_val < self.ub:
+                        print "Heuristic found new upper bound: %.2f" % heur_sol_val
+                        self.ub = heur_sol_val
                 new_root = Tree_node(self,[])
                 print "current root lb = %.2f" % new_root.lower_bound
                 if abs(new_root.lower_bound-self.lb)<0.001 or (abs(new_root.lower_bound-prev_root_lb)>0.5) :
@@ -1477,6 +1776,7 @@ class Tree():
                 print "Integer feasible solution found, objective: %f" %node.lower_bound
                 self.ub = node.lower_bound
                 self.solution_node = node
+                node.sol = sol
                 self.clean_up_and_adapt_duals([],[])
     @register_time
     @register_calls
@@ -1616,22 +1916,38 @@ def write_line(filename,instance_name,data):
 #7: [[0,1,32,30,40,5,46,36,39,51],[0,20,4,22,12,50,15,11,51],[0,27,8,43,17,6,42,7,29,51]]
 instance_names = {
 "SimCologne_C_50_twLength_30_i_1_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
-"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
-"SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_7_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_8_equalProfits.txt":-26,
-"SimCologne_C_50_twLength_30_i_9_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_10_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_11_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_12_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_14_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_15_equalProfits.txt":-21,             
+#"SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
+#"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
+#"SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_7_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_8_equalProfits.txt":-26,
+#"SimCologne_C_50_twLength_30_i_9_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_10_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_11_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_30_i_12_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_14_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_15_equalProfits.txt":-21,             
                   }
-
+instance_names = {
+#"SimCologne_C_50_twLength_60_i_1_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_2_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_60_i_3_equalProfits.txt":-27,
+#"SimCologne_C_50_twLength_60_i_4_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_5_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_6_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_7_equalProfits.txt":-24,
+"SimCologne_C_50_twLength_60_i_8_equalProfits.txt":-27,
+#"SimCologne_C_50_twLength_60_i_9_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_10_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_11_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_12_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_13_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_14_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_15_equalProfits.txt":-22,             
+                  }
 start_paramsens = [
                 {"vehicle_amount":3,
                 "update_duals" : 1,
@@ -1678,7 +1994,7 @@ for dynamic_discovery in [0]:
         file.write("\n______________________________________\n")
         file.write(start_line)
         file.close()
-        use_best_heuristic = 1
+        use_best_heuristic = 0
         bat_unit = 1.0
         load_fac = bat_unit*2.5
         loading_speed = load_fac
@@ -1690,10 +2006,8 @@ for dynamic_discovery in [0]:
         
         calc_cplex_time = 0
         
-        
-        
         for instance_name in sorted(instance_names.keys()):
-            
+            #raw_input()
             function_times = {}
             function_calls = {}
             function_times = {'branch':0.0,'solve_model':0.0,'choose_node':0}
@@ -1718,11 +2032,11 @@ for dynamic_discovery in [0]:
             vrp.update_duals=0
             vrp.adapt_model=0
             #time.sleep(3)
-            for i in vrp.nodes:
-                if i.name == 0:
-                    continue
-                i.split_node_both(i.tw_interval[0],i.bat_interval[0],0)
-                i.split_node_both(i.tw_interval[1],i.bat_interval[0],0)
+            #for i in vrp.nodes:
+            #    if i.name == 0:
+            #        continue
+            #    i.split_node_both(i.tw_interval[0],i.bat_interval[0],0)
+            #    i.split_node_both(i.tw_interval[1],i.bat_interval[0],0)
             vrp.update_duals=1
             vrp.adapt_model=1
             vrp.create_model()
@@ -1731,6 +2045,7 @@ for dynamic_discovery in [0]:
             tree.use_best_heuristic = use_best_heuristic
             tree.heuristic_ub = instance_names[instance_name]
             tree.time_limit = 3600
+            #break
             if use_best_heuristic:
                 tree.ub = instance_names[instance_name]
             if dynamic_discovery==0:

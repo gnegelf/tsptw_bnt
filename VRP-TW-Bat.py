@@ -1,11 +1,10 @@
+from datetime import datetime
 import cplex
 import re
 import math
 import time
 #import sys
 import functools
-
-function_times = {}
 
 def register_time(func):
     @functools.wraps(func)
@@ -19,14 +18,14 @@ def register_time(func):
         return value
     return wrapper_decorator
 
-def register_time_calls(func):
+def register_calls(func):
     @functools.wraps(func)
     def wrapper_decorator(*args, **kwargs):
         value = func(*args, **kwargs)
         if function_times.has_key(func.__name__):
-            function_times[func.__name__] += 1
+            function_calls[func.__name__] += 1
         else:
-            function_times[func.__name__] = 1
+            function_calls[func.__name__] = 1
         return value
     return wrapper_decorator
 
@@ -148,6 +147,62 @@ def solToCyclesMultiVisit(solutionStringList,yStringList,depot=0,goal=51):
                 
     return S,oS
 
+def solToCyclesY(yStringList,depot=0):
+    arcList=[]
+    for string in yStringList:
+        arcList.append([int(s) for s in re.split("[_]",string)[1:]])
+    #notS = range(1,n)
+    S = [[(depot,0,battery_capacity)]]
+    oS= []
+    while len(arcList)>0:
+        popIndices=[]
+        for i in range(len(arcList)):
+            if arcList[i][0]== S[len(S)-1][-1][0] and arcList[i][2]== S[len(S)-1][-1][1] and arcList[i][3]== S[len(S)-1][-1][2]:
+                S[len(S)-1].append((arcList[i][1],arcList[i][4],arcList[i][5]))
+                popIndices.append(i)
+        if len(popIndices)== 0:
+            if len(S[-1]) == 1:
+                S.pop(-1)
+                break
+            S.append([(depot,0,battery_capacity)])
+            #break
+        while len(popIndices)>0:
+            arcList.pop(popIndices.pop(-1))
+    if len(arcList)>0:
+        firstArc = arcList.pop(0)
+        oS.append([(firstArc[0],firstArc[2],firstArc[3]),(firstArc[1],firstArc[4],firstArc[5])])
+        while len(arcList)>0:
+            popIndices=[]
+            for i in range(len(arcList)):
+                if arcList[i][0]== oS[len(oS)-1][-1][0] and arcList[i][2]== oS[len(oS)-1][-1][1] and arcList[i][3]== oS[len(oS)-1][-1][2]:
+                    oS[len(oS)-1].append((arcList[i][1],arcList[i][4],arcList[i][5]))
+                    popIndices.append(i)
+            if len(popIndices)== 0:
+                if len(arcList) > 0:
+                    oS.append(arcList.pop(0))
+                #break
+            while len(popIndices)>0:
+                arcList.pop(popIndices.pop(-1))
+    #check if any path in S contains a cycle
+    passCheck = 0
+    while passCheck == 0:
+        passCheck = 1
+        for q in range(len(S)):
+            path=S[q]
+            for i,node in enumerate(path):
+                for j in range(i+1,len(path)):
+                    if path[j] == node:
+                        passCheck = 0
+                        low=i
+                        high=j
+                        break
+                if not passCheck:
+                    break
+            if not passCheck:
+                oS.append([path[low+1:high+1]])
+                path=path[0:low]+path[high+1:len(path)]
+                
+    return S,oS
 def solToCycles(solutionStringList,depot=0):
     arcList=[]
     for string in solutionStringList:
@@ -256,11 +311,26 @@ def readData(file_name,directory_name ="AFG"):
     for i in range(len(profits)):
         profits[i]=int(profits[i])
     vertNum+=1
+    depotDists = [0]+depotDists+[0]
+    profits = [0]+profits+[0]
+    vertNum += 1
+    TWs.append([TWs[0][0],TWs[0][1]])
+    TWs[0][1]=0
+    adj_matrix[vertNum-1] = {}
+    for i in range(1,vertNum-1):
+        adj_matrix[i][vertNum-1]=adj_matrix[0][i]-service_time
+    #full_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+    
+    for i in  range(vertNum):
+        if adj_matrix[i].has_key(0):
+            adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
+        if adj_matrix[i].has_key(i):
+            adj_matrix[i].pop(i)
     return vertNum,TWs,adj_matrix,profits,depotDists
 
 def arc_lengths_pre(tail,head,time,battery_level,goal_time_interval,goal_bat_interval):
-    tr_time = old_adj_matrix[tail][head]
-    tr_bat = battery_matrix[tail][head]
+    tr_time = full_adj_matrix[tail][head]
+    tr_bat  = battery_matrix[tail][head]
     tr_bat1 = battery_matrix[0][tail]
     tr_bat2 = battery_matrix[0][head]
     if  tr_bat1+battery_level < -0.0001:
@@ -295,25 +365,30 @@ def arc_lengths(tail_bat_node,head_vrp_node):
     return time_delta,bat_delta
 
 class VRP():
-    def __init__(self,TWs,bat_intervals,adj_matrix,profits,battery_matrix,depot,goal,loading_speed,battery_capacity):
-        self.savedQ = {}
-        self.savedZ = {}
-        self.multivisit_model = 1
-        self.update_duals=1
+    def __init__(self,TWs,bat_intervals,full_adj_matrix,adj_matrix,profits,battery_matrix,depot,goal,loading_speed,battery_capacity,start_params={}):
+
+        self.set_start_params(start_params)
+        self.loading_speed = loading_speed
+        self.battery_capacity = battery_capacity
+        
+        
         self.depot = depot
         self.goal = goal
-        self.check_interval_precedences = 1
-        self.vehicle_amount = 3
         self.TWs = TWs
-        self.n=len(TWs)
-        self.indices=range(self.n)
-        self.battery_matrix=battery_matrix
-        self.battery_from_depot= {i:battery_matrix[0][i] for i in battery_matrix}
-        self.nodes = [VRP_node(self,i,TWs[i][0],TWs[i][1],bat_intervals[i][0],bat_intervals[i][1]) for i in self.indices]
-        self.arc_dict = {}
-        self.loading_speed =loading_speed
-        self.battery_capacity = battery_capacity
+        self.bat_intervals = bat_intervals
+        self.n = len(TWs)
+        self.indices = range(self.n)
+        self.battery_matrix = battery_matrix
+        self.full_adj_matrix = full_adj_matrix
         self.adj_matrix = adj_matrix
+        self.profits = profits
+        self.battery_from_depot= {i:battery_matrix[0][i] for i in battery_matrix}
+        
+        self.break_path = 1
+        
+        self.nodes = [VRP_node(self,i,TWs[i][0],TWs[i][1],bat_intervals[i][0],bat_intervals[i][1]) for i in self.indices]
+        
+        self.arc_dict = {}
         for i in adj_matrix:
             for j in adj_matrix[i].keys():
                 time_delta,bat_delta,load_time = self.calc_deltas(i,j,self.nodes[i].interval_nodes[0].battery_nodes[0].bat_interval[1],
@@ -332,11 +407,24 @@ class VRP():
         for i in self.adj_matrix:
             for j in self.adj_matrix[i]:
                 self.adj_matrix_tr[j][i]=self.adj_matrix[i][j]
-        self.profits = profits
+        
         self.adapt_model = 1
+        if self.remove_cycles_at_start:
+            self.find_cycles()
+
+        if self.remove_infeasible_paths_at_start:
+            self.find_infeasible_paths()
+
+        if self.add_priority_cuts_at_start:
+            self.find_priority_cuts()
+    def set_start_params(self,start_params):
+        self.remove_cycles_at_start = start_params["remove_cycles_at_start"]
+        self.remove_infeasible_paths_at_start = start_params["remove_infeasible_paths_at_start"]
+        self.add_priority_cuts_at_start = start_params["add_priority_cuts_at_start"]
+        self.multivisit_model = start_params["multivisit_model"]
+        self.update_duals = start_params["update_duals"]
+        self.vehicle_amount = start_params["vehicle_amount"]
     def create_model(self,var_type='C'):
-        #t0 = time.time()
-        self.model = cplex.Cplex()
         self.const_num = 0
         self.const_name2idx={}
         self.idx2name = {}
@@ -344,11 +432,11 @@ class VRP():
         self.x_names = []
         self.y_names = []
         
+        self.model = cplex.Cplex()
         model = self.model
         model.set_results_stream(None)
         model.set_log_stream(None)
         model.parameters.advance.set(1)
-        #TODO: Find out why warning gets triggered
         model.set_warning_stream(None)
         x_names = ["x_%d_%d" %(i,j) for i in self.indices for j in self.adj_matrix[i]]
         if self.multivisit_model:
@@ -361,11 +449,12 @@ class VRP():
         y_names = ["y_%d_%d_%d_%d_%d_%d" % (arc.tail.name,arc.head.name,
                                            arc.tail.id[0],arc.tail.id[1],arc.head.id[0],arc.head.id[1])
                         for key,arc_list in self.arc_dict.iteritems() for arc in arc_list]
-
+        
         self.add_variables(x_names,[var_type]*len(x_names),x_obj,[0.0]*len(x_names),[1.0]*len(x_names),'x')
-        self.add_variables(y_names,['C']*len(y_names),[0.0]*len(y_names),[0.0]*len(y_names),[1.0]*len(y_names),'y')
+        self.x_num=len(x_names)
         if self.multivisit_model:
             self.add_variables(z_names,['C']*len(z_names),z_obj,[0.0]*len(z_names),[1.0]*len(z_names),'z')
+        self.add_variables(y_names,['C']*len(y_names),[0.0]*len(y_names),[0.0]*len(y_names),[1.0]*len(y_names),'y')
         allvars = []
         allrhs = []
         allsenses = []
@@ -446,12 +535,59 @@ class VRP():
             all_names.append("arcuse_%d_%d" %(i,j))
         
         self.add_constraints(all_names,allvars,allsenses,allrhs)
+        if self.remove_cycles_at_start:
+            self.remove_cycles()
+        if self.remove_infeasible_paths_at_start:
+            self.remove_infeasible_paths()
+        if self.add_priority_cuts_at_start:
+            self.add_priority_cuts()
         if var_type == 'C':
             self.model.set_problem_type(0)
             self.model.parameters.lpmethod.set(2)
-        #self.model_creation_time += time.time()-t0
-        #self.idx2name = { j : n for j, n in enumerate(model.variables.get_names()) }
-        #self.name2idx = { n : j for j, n in enumerate(model.variables.get_names()) }
+    def find_infeasible_paths(self):
+        self.infeasible_paths = []
+        for i in self.adj_matrix:
+            timeI = self.TWs[i][0]
+            batI = self.bat_intervals[i][1]
+            for k in self.adj_matrix[i]:
+                time_delta_ik,bat_delta_ik,lt = self.calc_deltas(i,k,batI,timeI)
+                for j in self.adj_matrix[k]:
+                    time_delta_kj,bat_delta_kj,lt = self.calc_deltas(k,j,batI+bat_delta_ik,timeI+time_delta_ik)
+                    if timeI+time_delta_ik+time_delta_kj>self.TWs[j][1]+0.0001 or batI+bat_delta_ik+bat_delta_kj< self.bat_intervals[j][0]-0.0001:
+                        self.infeasible_paths.append([i,k,j])
+    def remove_infeasible_paths(self):
+        if self.remove_infeasible_paths_at_start:
+            prev = []
+            for P in self.infeasible_paths:
+                sol = [[self.depot]+P+[self.goal]]
+                #self.add_infeasible_path(P)
+                split_points = self.findSplitPoints(sol)
+                if split_points != prev:
+                    for i,t,b in split_points:
+                        self.nodes[i].split_node_both(t,b)
+                prev = split_points
+    def find_cycles(self):
+        self.cycles = []
+        for i in adj_matrix:
+            for j in adj_matrix[i]:
+                if i in adj_matrix[j].keys() and i<j:
+                    self.cycles.append( (i,j) )
+    def remove_cycles(self):
+        if self.remove_cycles_at_start:
+            for cycle in self.cycles:
+                self.add_ste_cut(cycle)
+    def find_priority_cuts(self):
+        self.priority_cuts = []
+        for i in adj_matrix:
+            for j in adj_matrix:
+                if i!=j and i not in [0,vert_num-1] and j not in [0,vert_num-1]:
+                    if (TWs[i][0]-depotDists[i] +0.0001 >= TWs[j][0]-depotDists[j] and 
+                        TWs[i][1]+depotDists[i] <= TWs[j][1]+depotDists[j]+0.0001 ):
+                        self.priority_cuts.append((i,j))
+    def add_priority_cuts(self):
+        if self.add_priority_cuts_at_start:
+            for i,j in self.priority_cuts:
+                self.add_priority_cut(i,j)
     def add_constraints(self,all_names,allvars,allsenses,allrhs):
         old_inds=self.const_num
         self.model.linear_constraints.add(names=all_names,lin_expr = allvars, 
@@ -479,6 +615,12 @@ class VRP():
             self.y_names.remove(old_var_name)
         else:
             print "Changing names of non y-variables is currently not supported :("
+    @register_time
+    @register_calls
+    def solve_model2(self,branches=[]):
+        self.model.solve()
+    @register_time
+    @register_calls
     def solve_model(self,branches=[]):
         self.model.set_problem_type(0)
         self.model.solve()
@@ -487,14 +629,11 @@ class VRP():
     def add_ste_cut(self,S):
         mySet=set(S)
         arc_list = []
-
-
         for i in mySet:
             for j in mySet:
                 if i != j:
                     if self.adj_matrix[i].has_key(j):
                         arc_list.append("x_%d_%d" % (i,j))
-        print arc_list
         self.model.linear_constraints.add(lin_expr=[cplex.SparsePair(arc_list,[1.0]*len(arc_list))],senses=['L'],rhs=[len(mySet)-1])
         self.const_num += 1
     def add_infeasible_path(self,P):
@@ -513,27 +652,83 @@ class VRP():
             coef_list = [1.0,-1.0]
             self.model.linear_constraints.add(lin_expr=[cplex.SparsePair(arc_list,coef_list)],senses=['G'],rhs=[0])
             self.const_num += 1
-        
-    def findSplitPoints(self,sol):
+    def findSplitPointsInfPathRef(self,sol):
+        old_split_points = []
+        for path in sol:
+            effective_levels = []
+            battery_level = battery_capacity
+            t = 0
+            splitNodes = 0
+            for i in range(len(path)-1):
+                time_delta,bat_delta,load_time = self.calc_deltas(path[i][0],path[i+1][0],battery_level,t)
+                battery_level += bat_delta
+                t += time_delta
+                if t <= self.nodes[path[i+1][0]].tw_interval[1]+0.0001 and battery_level >= self.nodes[path[i+1][0]].bat_interval[0]-0.0001:
+                    effective_levels.append((path[i+1][0],t,battery_level))
+                else:
+                    splitNodes = 1
+                    break
+            if splitNodes:
+                for i in range(len(effective_levels)-1,0,-1):
+                    #print path[i+1]
+                    #print effective_levels[i]
+                    #time.sleep(1)
+                    time_delta,bat_delta,load_time = self.calc_deltas(path[i+1][0],path[i+2][0],path[i+1][2],path[i+1][1])
+                    old_split_points.append((path[i+2][0],path[i+1][1]+time_delta,path[i+1][2]+bat_delta))
+                    if path[i+1]==effective_levels[i]:
+                        break
+        return old_split_points
+    def findSplitPointsOlder(self,sol):#split points to guarantee path is infeasible
         old_split_points = []
         for path in sol:
             new_split_points = []
             battery_level = battery_capacity
-            time = 0
+            t = 0
             for i in range(len(path)-1):
-                time_delta,bat_delta,load_time = self.calc_deltas(path[i],path[i+1],battery_level,time)
+                time_delta,bat_delta,load_time = self.calc_deltas(path[i],path[i+1],battery_level,t)
                 battery_level += bat_delta
-                time += time_delta
-                if time <= self.nodes[path[i+1]].tw_interval[1]+0.0001 and battery_level >= self.nodes[path[i+1]].bat_interval[0]-0.0001:
-                    new_split_points.append((path[i+1],time,battery_level))
+                t += time_delta
+                if t <= self.nodes[path[i+1]].tw_interval[1]+0.0001 and battery_level >= self.nodes[path[i+1]].bat_interval[0]-0.0001:
+                    new_split_points.append((path[i+1],t,battery_level))
                 else:
-                    #print "Node %d is not reachable from %d with time %d and battery_level %d" % (path[i+1],path[i],time,battery_level)
-                    #print "deltas are %d, %d" %(time_delta,bat_delta)
-                    #print "battery has to be greater %d, time less than %d"  %(self.nodes[path[i+1]].bat_interval[0],self.nodes[path[i+1]].tw_interval[1])
-                    #print "split_points: " + str(new_split_points)
                     old_split_points += new_split_points
                     break
+        old_split_points += self.findSplitPointsHeuristic(sol)
         return old_split_points
+    def findTimedBatteryPath(self,path):
+        pathTimeBattery = []
+        battery_level = battery_capacity
+        t = 0
+        for i in range(len(path)-1):
+            time_delta,bat_delta,load_time = self.calc_deltas(path[i][0],path[i+1][0],battery_level,t)
+            battery_level += bat_delta
+            t += time_delta
+            if t <= self.nodes[path[i+1][0]].tw_interval[1]+0.0001 and battery_level >= self.nodes[path[i+1][0]].bat_interval[0]-0.0001:
+                pathTimeBattery.append((path[i+1][0],t,battery_level))
+            else:
+                return 0,pathTimeBattery
+        return 1,pathTimeBattery
+    def findArcCorrection(self,path,pathTB):
+        arc_correction_sp = []
+        for i in range(0,len(pathTB)):
+            time_delta,bat_delta,load_time = self.calc_deltas(path[i+1][0],path[i+2][0],path[i+1][2],path[i+1][1])
+            if (path[i+2][0],path[i+1][1]+time_delta,path[i+1][2]+bat_delta) not in pathTB:
+                arc_correction_sp.append((path[i+2][0],path[i+1][1]+time_delta,path[i+1][2]+bat_delta))
+        return arc_correction_sp
+    def findSplitPoints(self,sol):#heuristic for additional split points 
+        split_point_list = []
+        for pathSeed in sol:
+            for j in range(len(pathSeed)-2,0,-1):
+                path = [pathSeed[0]]+pathSeed[j:]
+                pathFeasible,pathTB = self.findTimedBatteryPath(path)
+                if not pathFeasible:
+                    arc_corrections = self.findArcCorrection(path,pathTB)
+                    if len(split_point_list) == 0:
+                        split_point_list += arc_corrections+pathTB
+                    else:
+                        if split_point_list[-1][0]!=pathTB[-1][0]:
+                            split_point_list += arc_corrections+pathTB
+        return split_point_list
     def solToPaths(self,sol):
         old_split_points = []
         for path in sol:
@@ -558,7 +753,7 @@ class VRP():
     def calc_deltas(self,tail_idx,head_idx,battery_level,time):
         tail = self.nodes[tail_idx]
         head = self.nodes[head_idx]
-        tr_time = old_adj_matrix[tail.name][head.name]
+        tr_time = self.full_adj_matrix[tail.name][head.name]
         tr_bat = self.battery_matrix[tail.name][head.name]
         tr_bat1 = self.battery_from_depot[tail.name]
         tr_bat2 = self.battery_from_depot[head.name]
@@ -628,14 +823,13 @@ class VRP_node():
         if self.name == self.vrp.goal:
             return 1
         tw_idx,split_tw = self.find_tw_index(split_point_tw)
-        #blub-8
-        #print tw_idx
         if split_tw:
             new_tw_idx = tw_idx+1
         else:
             new_tw_idx = tw_idx
         bat_idx,split_bat = self.find_bat_index(split_point_bat,tw_idx)
-        #print split_bat
+        
+        
         if split_bat:
             old_bat_idx = bat_idx+1
         else:
@@ -643,10 +837,11 @@ class VRP_node():
         if split_bat+split_tw < 1:
             return 0
             print "Error neither battery window nor time_window split"
+            
         old_ub_tw = self.interval_nodes[tw_idx].tw_interval[1]
         old_lb_bat = self.interval_nodes[tw_idx].battery_nodes[bat_idx].bat_interval[0]
         
-        #ToDo: Spalten von Batterieinterval, wenn es Zeitpunkt schon gibt, eventuell andere Funktion hierfuer
+        
         if split_tw:
             self.interval_nodes.insert(new_tw_idx,Interval_node(self.name,[split_point_tw,old_ub_tw],self,0,self.interval_nodes[tw_idx].is_tw_ub()))
             for bat_node in self.interval_nodes[tw_idx].battery_nodes:
@@ -656,21 +851,17 @@ class VRP_node():
             self.interval_nodes[new_tw_idx].battery_nodes.insert(bat_idx,
                            Battery_node(self.name,[old_lb_bat,split_point_bat],self.interval_nodes[new_tw_idx],
                                         self.interval_nodes[new_tw_idx].battery_nodes[bat_idx].is_bat_lb(),0))
-        #ToDo: Neuen Batterieknoten an split_point_bat_einfuegen
         if split_tw:
             self.interval_nodes[tw_idx].is_ub=0
             self.interval_nodes[tw_idx].tw_interval[1] = split_point_tw
         if split_bat:
             self.interval_nodes[new_tw_idx].battery_nodes[old_bat_idx].is_lb = 0
             self.interval_nodes[new_tw_idx].battery_nodes[old_bat_idx].bat_interval[0] = split_point_bat
-        #print self.interval_nodes[idx].id
-        #print split_point
-        #add variable for new node
-        #print "Splitting node: %d" % self.name
+
+        
         
         node_counter = 0
         bat_idx_reached = 0
-        #necessary to insert all correct dual values, because the new battery list has 1 extra node in position bat_idx
         if self.vrp.adapt_model:
             if self.name!=self.vrp.goal:
                 if split_tw:
@@ -723,11 +914,11 @@ class VRP_node():
                             print self.vrp.nodes[old_head.name].bat_interval
                     else:
                         print "Error no interval node found"
-                        print "Tail interval" + str(arc.tail.interval_node.tw_interval)
-                        print "Shifted by: " + str(arc.arc_time)
-                        print "Original arc time: " + str(self.vrp.adj_matrix[arc.tail.name][arc.head.name])
-                        print "Head interval:" + str(self.tw_interval)
-                        time.sleep(10)
+                        #print "Tail interval" + str(arc.tail.interval_node.tw_interval)
+                        #print "Shifted by: " + str(arc.arc_time)
+                        #print "Original arc time: " + str(self.vrp.adj_matrix[arc.tail.name][arc.head.name])
+                        #print "Head interval:" + str(self.tw_interval)
+                        #time.sleep(10)
 
                     
 
@@ -784,7 +975,7 @@ class VRP_node():
                                         Arc(new_head,bat_node)
                                 )
                 
-        
+
         if self.vrp.adapt_model:
             for new_arc in new_arc_list:             
                 #print "new_arc: %d,%d,%d,%d" %(new_arc.tail.name, new_arc.head.name,new_arc.tail.id,new_arc.head.id)
@@ -800,6 +991,9 @@ class VRP_node():
                     
                 const_name = "arcuse_%d_%d" % (new_arc.tail.name,new_arc.head.name)
                 self.vrp.model.linear_constraints.set_coefficients([(const_name,new_var_name,1.0)]) 
+        if self.vrp.break_path:
+            if new_tw_idx < len(self.interval_nodes)-2:
+                self.split_node_both(self.interval_nodes[new_tw_idx+1].tw_interval[0],split_point_bat,dual_value_locations)
         return 1
     def find_tw_index(self,split_point,tol=0.000001):
         if split_point < self.tw_lb-tol:
@@ -940,54 +1134,35 @@ class Tree_node():
         self.red_costs = red_costs
         self.lower_bound = 0
         self.fractionals = {}
-        self.y_fractionals = {}
         if self.solve_lp_relaxation() and self.lower_bound < self.tree.ub:
             self.feasible = 1
         else:
             self.feasible = 0
-    def update_dual_values(self,dual_value_locations):
+    def update_dual_values(self,dual_value_locations,extra_values=[]):
         for ind in dual_value_locations:
             self.dual_values_model.append(self.dual_values_model[ind])
-    def solve_lp_relaxation(self,dual_value_locations=[],warm_start=1,tol=0.000001):
-        
+        if extra_values != []:
+            self.dual_values_model += extra_values
+    def solve_lp_relaxation(self,tol=0.000001):
         vrp = self.tree.vrp
-        if vrp.update_duals:
-            self.update_dual_values(dual_value_locations)
         model = vrp.model
-        model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,
-                                         senses = self.branch_senses,rhs = self.branch_rhs)
+        oldLen = len(self.branches)
+        
+        model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,senses = self.branch_senses,rhs = self.branch_rhs)
         if self.tree.vrp.update_duals and self.dual_values_model != 0:
-            t_start0 = time.time()
             model.parameters.advance.set(1)
-            model.start.set_start(col_status=[],
-                     row_status=[],
-                     #col_primal=self.primal_values,
-
-                     row_dual=self.dual_values_model+self.dual_values_branches,
-                     col_primal=[],
-                     row_primal=[],
-                     col_dual=[],
-                     #row_dual=[]
-                     )
-            self.tree.add_start_time += time.time() - t_start0
+            model.start.set_start(col_status=[],row_status=[],
+                                  row_dual=self.dual_values_model+self.dual_values_branches,col_primal=[],row_primal=[],col_dual=[])
+        
         #model.parameters.preprocessing.presolve.set(0)
-        t0 = time.time()
-        if self.tree.vrp.adapt_model:
-            feas = vrp.solve_model()
-        else:
-            feas = 1
-            vrp.model.solve()
+        feas = vrp.solve_model()
         self.updated_lp_relaxation = 1
-        self.tree.lp_times.append((time.time()-t0))
-        self.tree.lp_time += time.time()-t0
-        self.tree.simp_iteras.append(model.solution.progress.get_num_iterations())
         model.parameters.advance.set(0)
         if not feas:
             self.lower_bound = 1000000
-            model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-len(self.branches),model.linear_constraints.get_num()))
+            model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
             return 0
         else:
-            t_sol_eval0=time.time()
             solution = model.solution
             if self.tree.vrp.adapt_model:
                 dual_values = solution.get_dual_values()
@@ -997,45 +1172,17 @@ class Tree_node():
             self.dual_values_branches = dual_values[self.tree.vrp.const_num:]
             self.primal_values = solution.get_values()
             self.lower_bound = solution.get_objective_value()
-            if self.tree.vrp.adapt_model:
-                self.reduced_costs = solution.get_reduced_costs()
-            else:
-                self.reduced_costs = []
-            #TODO: Check this reduced cost fixing
-            oldLen = len(self.branches)
-
+            
             self.primal_x_values = {name:self.primal_values[self.tree.vrp.name2idx[name]] for name in self.tree.vrp.x_names 
                                     if self.primal_values[self.tree.vrp.name2idx[name]]>tol}
-            self.primal_y_values = {name:self.primal_values[self.tree.vrp.name2idx[name]] for name in self.tree.vrp.y_names
-                                    if self.primal_values[self.tree.vrp.name2idx[name]]>tol}
-            if self.tree.reduced_cost_fixing:
-                for i,val in enumerate(self.reduced_costs):
-                    if val > tol:
-                        if self.tree.vrp.idx2name[i][0] == 'x' and self.lower_bound + val >= self.tree.ub:
-                            self.branches.append(Branch(self.tree.vrp.idx2name[i],'L',0.0))
-                            self.branch_names.append(self.branches[-1].name)
-                            self.branch_lin_exprs.append(self.branches[-1].lin_expr)
-                            self.branch_senses.append(self.branches[-1].sense)
-                            self.branch_rhs.append(self.branches[-1].rhs)
-                            self.dual_values_branches.append(0.0)
-                    
-                    if val < -tol and self.primal_values[i] > 1-tol:
-                        if (self.tree.vrp.idx2name[i][0] == 'x' and self.lower_bound - val >= self.tree.ub):
-                            #print "Fixing variable to 1"
-                            self.branches.append(Branch(self.tree.vrp.idx2name[i],'G',1.0))
-                            self.branch_names.append(self.branches[-1].name)
-                            self.branch_lin_exprs.append(self.branches[-1].lin_expr)
-                            self.branch_senses.append(self.branches[-1].sense)
-                            self.branch_rhs.append(self.branches[-1].rhs)
-                            self.dual_values_branches.append(0.0)
-                
-            for key,val in self.primal_x_values.iteritems():
-                if abs(0.5-val)<0.5-tol:
-                    self.fractionals[key] = val
-            for key,val in self.primal_y_values.iteritems():
-                if abs(0.5-val)<0.5-tol:
-                    self.y_fractionals[key] = val
-            self.tree.sol_eval_time += time.time() - t_sol_eval0
+            self.primal_x_values = { name:val for name,val in zip(self.tree.vrp.x_names,self.primal_values[0:self.tree.vrp.x_num])
+                        if self.primal_values[self.tree.vrp.name2idx[name]]>tol }
+            self.fractionals = {key:val for key,val in self.primal_x_values.iteritems() if abs(0.5-val)<0.5-tol}
+            if len(self.fractionals) == 0:
+                self.primal_y_values = {name:self.primal_values[self.tree.vrp.name2idx[name]] for name in self.tree.vrp.y_names
+                        if self.primal_values[self.tree.vrp.name2idx[name]]>tol}
+            else:
+                self.primal_y_values = {}
         model.linear_constraints.delete(xrange(model.linear_constraints.get_num()-oldLen,model.linear_constraints.get_num()))
         #self.tree.total_relaxation_time += time.time() - t0
         return 1
@@ -1108,12 +1255,12 @@ class Branch():
 
 class Tree():
     def __init__(self,vrp,start_control):
-        self.print_interval = 10
+        self.print_interval = 30
         self.add_all_split_points=1
         self.lbs = []
         #self.print_switch = 0
         self.psi_avg = 0
-        self.reduced_cost_fixing = 1
+        self.reduced_cost_fixing = 0
         self.lp_times=[]
         self.node_count = 1
         self.refinement_count = 0
@@ -1123,16 +1270,6 @@ class Tree():
         self.simp_iteras=[]
         self.simp_nd_iteras=[]
         self.start_control = start_control
-        self.branch_variable_selection_time = 0.0
-        self.node_selection_time = 0.0
-        self.total_relaxation_time = 0.0
-        self.find_pi_sigma_time = 0.0
-        self.find_ste_time = 0.0
-        self.add_cut_time = 0.0
-        self.split_time = 0.0
-        self.find_split_time = 0.0
-        self.sol_eval_time = 0.0
-        self.add_start_time = 0.0
         self.closed_nodes = []
         self.vrp = vrp
         self.vrp.tree = self
@@ -1148,8 +1285,9 @@ class Tree():
     def conditional_print(self,string):
         if self.count % self.print_interval == 0:
             print string
+    @register_time
+    @register_calls
     def choose_node(self,selection=1):
-        t0=time.time()
         if selection == 1:
             minInd = 0
             minVal= 100000000
@@ -1172,310 +1310,217 @@ class Tree():
                     minLb = node.lower_bound
             if self.lb < minVal:
                 self.lb = minLb
-        self.node_selection_time += time.time() - t0
         return self.open_nodes.pop(minInd)
+    @register_time
+    @register_calls
+    def branch(self,node):
+        branch_var,branch_val = node.choose_branch_var()
+        #print "branching"
+        f_1 = 1.0-branch_val
+        f_0 = branch_val
+        if self.vrp.update_duals:
+            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)],
+                                                                node.dual_values_model,
+                                                                node.dual_values_branches+[0.0]),
+                             Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)],
+                                                                node.dual_values_model,
+                                                                node.dual_values_branches+[0.0])]
+        else:
+            new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
+                             Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]  
+        if new_node_list[0].feasible:
+            c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
+        else:
+            c_0 = self.psi_avg/f_0
+        if new_node_list[1].feasible:
+            c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
+        else:
+            c_1 = self.psi_avg/f_1
+        self.branch_history[branch_var].append((c_0,c_1))
+        for new_node1 in new_node_list:
+            if new_node1.feasible:
+                if new_node1.lower_bound < self.ub-0.99:
+                    self.open_nodes.append(new_node1)
+    @register_time
+    @register_calls
+    def remove_shortCycles(self,shortCycles):
+        for S in shortCycles:
+            cy= [s[0] for s in S]
+            self.vrp.add_ste_cut(cy)
+    def clean_up_and_adapt_duals(self,dual_value_locations,extra_values):
+        pop_indices=[]
+        for i,node2 in enumerate(self.open_nodes):
+            if self.vrp.update_duals:
+                node2.update_dual_values(dual_value_locations,extra_values)
+            if len(extra_values)+len(dual_value_locations)>0:
+                node2.updated_lp_relaxation = 0
+            if not node2.feasible or node2.lower_bound >= self.ub-0.99:#TODO: Adapt this to non integer objective
+                pop_indices.append(i)
+        while (len(pop_indices)>0):
+            self.open_nodes.pop(pop_indices.pop(-1))
+    def adapt_vrp_graph(self,split_points):
+        dual_value_locations=[]
+        actually_split = 0
+        if self.vrp.update_duals:
+            for i,t,b in split_points:
+                bat=b
+                time=t
+                actually_split += self.vrp.nodes[i].split_node_both(time,bat,dual_value_locations)
+        else:
+            for i,t,b in split_points:
+                bat=b
+                time=t
+                actually_split += self.vrp.nodes[i].split_node_both(time,bat)
+        return dual_value_locations,actually_split
+    @register_time
+    @register_calls
     def branch_and_refine(self):
         if self.use_best_heuristic:
             self.ub = self.heuristic_ub
-        """
-        for i in self.vrp.adj_matrix:
-            for j in self.vrp.adj_matrix:
-                if (not self.vrp.precedence_graph[j].has_key(i) )and (not self.vrp.precedence_graph[i].has_key(j)) and i!=j:
-                    self.vrp.add_ste_cut([i,j])
-                    #print "cut added"
-        """
-        while len(self.open_nodes)>0 and self.lp_time < self.time_limit:
-            self.lbs.append(self.lb)
-            self.count += 1
-            addedCuts = 0
-            #splitCount = 0
-            #splitNodesForNonInteger = root_relaxation
-            
-            
+        t0=time.time()
+        self.count=0
+        prev_root_lb = self.root.lower_bound
+        while ( len(self.open_nodes)>0) and (time.time()-t0 < self.time_limit):
+            self.count+=1
+            self.conditional_print("Current lower bound: %f" % (self.lb))
+            self.conditional_print("Current best upper Bound: %f " % (self.ub))
+            self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
             node = self.choose_node()
-            #print "node chosen"
-            #time.sleep(0.2)
             if node.updated_lp_relaxation == 0 or 1:
                 node.solve_lp_relaxation()
             if not node.feasible or node.lower_bound >= self.ub-0.99:
                 continue
-            self.conditional_print("Current lower bound: %f" % (self.lb))
-            self.conditional_print("Current best upper Bound: %f " % (self.ub))
-            self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
-            print node.lower_bound
             if len(node.fractionals)>0:
-                #branching step
-                branch_var,branch_val = node.choose_branch_var()
-                print "branching"
-                f_1 = 1.0-branch_val
-                f_0 = branch_val
-                if self.vrp.update_duals:
-                    new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)],
-                                                                        node.dual_values_model,
-                                                                        node.dual_values_branches+[0.0]),
-                                     Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)],
-                                                                        node.dual_values_model,
-                                                                        node.dual_values_branches+[0.0])]
-                else:
-                    new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
-                                     Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]  
-                if new_node_list[0].feasible:
-                    c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
-                else:
-                    c_0 = self.psi_avg/f_0
-                if new_node_list[1].feasible:
-                    c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
-                else:
-                    c_1 = self.psi_avg/f_1
-                self.branch_history[branch_var].append((c_0,c_1))
-                    
-                #time.sleep(10)
-                for new_node1 in new_node_list:
-                    if new_node1.feasible:
-                        if new_node1.lower_bound < self.ub-0.99:
-                            self.open_nodes.append(new_node1)
-                #for node in self.open_nodes:
-                #    node.solve_lp_relaxation()
+                self.branch(node)
                 continue
             #this part should only be reached for integer solutions
-            t_ste_0 = time.time()
-            
-            #print "searching for cycles"
-            #print node.primal_x_values
-            sol,shortCycles = solToCyclesMultiVisit(node.primal_x_values,node.primal_y_values)
-            self.find_ste_time +=time.time()-t_ste_0
-            
-            #print sol
-            #print shortCycles
-            
-            
             #Segment to add STE Cuts, if a cut is added loop is continued
+            #sol,shortCycles = solToCyclesMultiVisit(node.primal_x_values,node.primal_y_values)
+            sol,shortCycles = solToCyclesY(node.primal_y_values)
+            
             if len(shortCycles)>0:
-                for S in shortCycles:
-                    print "Adding STE cut for set: " + str(S)
-                    self.vrp.add_ste_cut(S)
-                    self.cut_count +=1
-                    #cleanup += 1
-                t_add_cut0 = time.time()
-                pop_indices=[]
                 self.open_nodes.append(node)
-                for i,node2 in enumerate(self.open_nodes):
-                    if self.vrp.update_duals:
-                        node2.dual_values_model += [0.0]*addedCuts
-                    node2.updated_lp_relaxation = 0
-                    #node2.solve_lp_relaxation()
-                    if not node2.feasible or node2.lower_bound >= self.ub:
-                        pop_indices.append(i)
-                while (len(pop_indices)>0):
-                    self.open_nodes.pop(pop_indices.pop(-1))
-                self.add_cut_time += time.time() - t_add_cut0 
+                self.remove_shortCycles(shortCycles)
+                self.clean_up_and_adapt_duals([],[0.0]*len(shortCycles))
                 continue
             
             #Segment to split nodes, if nodes are split loop is continued
-            t_find_split0 = time.time()
-            split_points = self.vrp.findSplitPoints(sol)#splitPoints pruft, ob die Wege in 
-            #                                #S moglich sind und returned tuple hinzuzufugender Punkte der unzulassigen Wege
-            #print split_points
-            #time.sleep(1)
-            dual_value_locations=[]
+            #sol = [[v[0] for v in path] for path in sol]
+            #split_points = self.vrp.findSplitPointsInfPathRef(sol)#splitPoints pruft, ob die Wege in
+            split_points = self.vrp.findSplitPoints(sol)
             if len(split_points)>0:
                 print "Splitting nodes"
-                #print split_points
-                #time.sleep(10)
-                self.refinement_count += 1
-                #for i,node2 in enumerate(self.open_nodes):
-                #    if self.vrp.update_duals:
-                #        node2.dual_values_model += [0.0]*addedCuts
-                actually_split = 0
-                if self.vrp.update_duals:
-                    for i,t,b in split_points:
-                        actually_split += self.vrp.nodes[i].split_node_both(t,b,dual_value_locations)
-                else:
-                    for i,t,b in split_points:
-                        actually_split += self.vrp.nodes[i].split_node_both(t,b)
-                if actually_split == 0:
+                self.open_nodes.append(node)
+                dual_value_locations,split_successfull = self.adapt_vrp_graph(split_points)
+                self.clean_up_and_adapt_duals(dual_value_locations,[])
+                if split_successfull == 0:
                     print "Error no node split lb: " + str(node.lower_bound)
-                    print str(node.primal_y_values)
-                    #self.vrp.testNodeGraph()
-                    time.sleep(3)
-                    time.sleep(5)
-
-
-
-                pop_indices=[]
-                #node.solve_lp_relaxation(dual_value_locations)
-                self.open_nodes.insert(0,node)
-                for i,node2 in enumerate(self.open_nodes):
-                    #node2.solve_lp_relaxation(dual_value_locations)
-                    node2.update_dual_values(dual_value_locations)
-                    node2.updated_lp_relaxation = 0
-                    #node2.solve_lp_relaxation(dual_value_locations)
-                    #node2.updated_lp_relaxation = 1
-                    if not node2.feasible or node2.lower_bound >= self.ub-0.99:#TODO: Adapt this to non integer objective
-                        pop_indices.append(i)
-                while (len(pop_indices)>0):
-                    self.open_nodes.pop(pop_indices.pop(-1))
-                self.split_time += time.time()-t_find_split0
+                    print str(sol)
+                    print split_points
+                    print node.primal_y_values
+                    time.sleep(10) 
+                new_root = Tree_node(self,[])
+                print "current root lb = %.2f" % new_root.lower_bound
+                if abs(new_root.lower_bound-self.lb)<0.0001 or (abs(new_root.lower_bound-prev_root_lb)>0.5) :
+                    print "Root node has same lower bound as branch tree, restarting from root"
+                    self.open_nodes=[new_root]
+                    self.lb = new_root.lower_bound
+                    prev_root_lb = new_root.lower_bound
                 continue
-            
-            
             #segment if no cut was added and nodes were not split
             if node.lower_bound < self.ub-0.99:
-                self.solution_path = self.vrp.solToPaths(sol)
+                #self.solution_path = self.vrp.solToPaths(sol)
                 print "Integer feasible solution found, objective: %f" %node.lower_bound
                 self.ub = node.lower_bound
                 self.solution_node = node
-            pop_indices=[]
-            #pruning of tree
-            for i,node2 in enumerate(self.open_nodes):
-                #node2.solve_lp_relaxation()
-                if not node2.feasible or node2.lower_bound >= self.ub-0.99:
-                    pop_indices.append(i)
-            while (len(pop_indices)>0):
-                self.open_nodes.pop(pop_indices.pop(-1))
+                self.clean_up_and_adapt_duals([],[])
+    @register_time
+    @register_calls
     def dynamic_discovery(self):
         if self.use_best_heuristic:
             self.ub = self.heuristic_ub
-        """
-        for i in self.vrp.adj_matrix:
-            for j in self.vrp.adj_matrix:
-                if (not self.vrp.precedence_graph[j].has_key(i) )and (not self.vrp.precedence_graph[i].has_key(j)) and i!=j:
-                    self.vrp.add_ste_cut([i,j])
-                    #print "cut added"
-        """
-        time_feasible = 0
-        while not time_feasible:
-            while len(self.open_nodes)>0 and self.lp_time < self.time_limit:
-                self.lbs.append(self.lb)
-                self.count += 1
-                addedCuts = 0
-                #splitCount = 0
-                #splitNodesForNonInteger = root_relaxation
+        t0 = time.time()
+        while time.time()-t0 < self.time_limit:
+            while len(self.open_nodes)>0 and time.time()-t0 < self.time_limit:
+                self.count+=1
                 self.conditional_print("Current lower bound: %f" % (self.lb))
                 self.conditional_print("Current best upper Bound: %f " % (self.ub))
                 self.conditional_print("Number of open nodes: %d" % len(self.open_nodes))
-                
-                
-                
                 node = self.choose_node()
-                #print "node chosen"
-                #time.sleep(0.2)
                 if node.updated_lp_relaxation == 0:
                     node.solve_lp_relaxation()
-                if not node.feasible or node.lower_bound >= self.ub:
+                if not node.feasible or node.lower_bound >= self.ub-0.99:
                     continue
-                print node.lower_bound
                 if len(node.fractionals)>0:
-                    #branching step
-                    branch_var,branch_val = node.choose_branch_var()
-                    print "branching"
-                    f_1 = 1.0-branch_val
-                    f_0 = branch_val
-                    if self.vrp.update_duals:
-                        new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)],
-                                                                            node.dual_values_model,
-                                                                            node.dual_values_branches+[0.0]),
-                                         Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)],
-                                                                            node.dual_values_model,
-                                                                            node.dual_values_branches+[0.0])]
-                    else:
-                        new_node_list = [Tree_node(node.tree,node.branches+[Branch(branch_var,'L',0.0)]),
-                                         Tree_node(node.tree,node.branches+[Branch(branch_var,'G',1.0)])]  
-                    if new_node_list[0].feasible:
-                        c_0 = (new_node_list[0].lower_bound-node.lower_bound)/f_0
-                    else:
-                        c_0 = self.psi_avg/f_0
-                    if new_node_list[1].feasible:
-                        c_1 = (new_node_list[1].lower_bound-node.lower_bound)/f_1
-                    else:
-                        c_1 = self.psi_avg/f_1
-                    self.branch_history[branch_var].append((c_0,c_1))
-                        
-                    #time.sleep(10)
-                    for new_node1 in new_node_list:
-                        if new_node1.feasible:
-                            if new_node1.lower_bound < self.ub-0.99:
-                                self.open_nodes.append(new_node1)
-                    #for node in self.open_nodes:
-                    #    node.solve_lp_relaxation()
+                    self.branch(node)
                     continue
-                #this part should only be reached for integer solutions
-                t_ste_0 = time.time()
                 
-                #print "searching for cycles"
-                #print node.primal_x_values
-                sol,shortCycles = solToCycles(node.primal_x_values)
-                self.find_ste_time +=time.time()-t_ste_0
-                
-                #print sol
-                #print shortCycles
-                
-                
-                #Segment to add STE Cuts, if a cut is added loop is continued
+                sol,shortCycles = solToCyclesY(node.primal_y_values)
                 if len(shortCycles)>0:
-                    for S in shortCycles:
-                        print "Adding STE cut for set: " + str(S)
-                        self.vrp.add_ste_cut(S)
-                        self.cut_count +=1
-                        #cleanup += 1
-                    t_add_cut0 = time.time()
-                    pop_indices=[]
                     self.open_nodes.append(node)
-                    for i,node2 in enumerate(self.open_nodes):
-                        if self.vrp.update_duals:
-                            node2.dual_values_model += [0.0]*addedCuts
-                        node2.updated_lp_relaxation = 0
-                        #node2.solve_lp_relaxation()
-                        if not node2.feasible or node2.lower_bound >= self.ub:
-                            pop_indices.append(i)
-                    while (len(pop_indices)>0):
-                        self.open_nodes.pop(pop_indices.pop(-1))
-                    self.add_cut_time += time.time() - t_add_cut0 
+                    self.remove_shortCycles(shortCycles)
+                    self.clean_up_and_adapt_duals([],[0.0]*len(shortCycles))
                     continue
                 
 
-                
                 #segment if no cut was added and nodes were not split
                 if node.lower_bound < self.ub-0.99:
                     self.sol = sol
-                    self.solution_path = self.vrp.solToPaths(sol)
+                    #self.solution_path = self.vrp.solToPaths(sol)
                     print "Integer feasible solution found, objective: %f" %node.lower_bound
                     self.ub = node.lower_bound
                     self.solution_node = node
-                pop_indices=[]
-                #pruning of tree
-                for i,node2 in enumerate(self.open_nodes):
-                    #node2.solve_lp_relaxation()
-                    if not node2.feasible or node2.lower_bound >= self.ub-0.99:
-                        pop_indices.append(i)
-                while (len(pop_indices)>0):
-                    self.open_nodes.pop(pop_indices.pop(-1))
-            split_points = self.vrp.findSplitPoints(self.sol)#splitPoints pruft, ob die Wege in 
-            #                                #S moglich sind und returned tuple hinzuzufugender Punkte der unzulassigen Wege
-            #print split_points
-            #time.sleep(1)
+                    self.clean_up_and_adapt_duals([],[])
+    
+            split_points = self.vrp.findSplitPointsInfPathRef(self.sol)
             if len(split_points)>0:
-                print "Splitting nodes"
-                #print split_points
-                #time.sleep(10)
-                self.refinement_count += 1
-                #for i,node2 in enumerate(self.open_nodes):
-                #    if self.vrp.update_duals:
-                #        node2.dual_values_model += [0.0]*addedCuts
-                actually_split = 0
-                for i,t,b in split_points:
-                    actually_split += self.vrp.nodes[i].split_node_both(t,b)
-                if actually_split == 0:
-                    print "Error no node split"
                 self.ub = 0
+                self.lb = -51
+                print "Splitting nodes"
+                self.open_nodes.append(node)
+                dual_value_locations,split_successfull = self.adapt_vrp_graph(split_points)
+                self.clean_up_and_adapt_duals(dual_value_locations,[])
+                if split_successfull == 0:
+                    print "Error no node split lb: " + str(node.lower_bound)
+                    print str(node.primal_y_values)
                 self.root = Tree_node(self,[])
                 self.open_nodes = [self.root]
             else:
-                time_feasible = 1
+                break
+    @register_time
+    @register_calls
+    def dynamic_discovery_cplex(self):
+        if self.use_best_heuristic:
+            self.ub = self.heuristic_ub
+        t0 = time.time()
+        while time.time()-t0 < self.time_limit and self.lb<self.ub-0.99:
+            no_cycles = 0
+            while no_cycles == 0:
+                self.vrp.create_model('B')            #model.parameters.preprocessing.presolve.set(0)
+                self.vrp.solve_model2()
+                model = self.vrp.model
+                solution = model.solution
+                primal_values = solution.get_values()
+                lower_bound = solution.get_objective_value()
+                tol = 0.0001
+                primal_y_values = {name:primal_values[self.vrp.name2idx[name]] for name in self.vrp.y_names
+                            if primal_values[self.vrp.name2idx[name]]>tol}
+                sol,shortCycles = solToCyclesY(primal_y_values)
+                if len(shortCycles)>0:
+                    self.remove_shortCycles(shortCycles)
+                else:
+                    no_cycles = 1
+            split_points = self.vrp.findSplitPointsInfPathRef(sol)
+            if len(split_points)>0:
+                self.ub = self.heuristic_ub
+                self.lb = lower_bound
+                print "Splitting nodes"
+                dual_value_locations,split_successfull = self.adapt_vrp_graph(split_points)
+            else:
+                self.ub = lower_bound
+                break
 
-
-
-def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,deep_check=0):
+def process_adj_matrix(adj_matrix,TWs):
     for i in adj_matrix:
         toRemove = []
         for j in adj_matrix[i]:
@@ -1495,7 +1540,8 @@ def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,deep_check=0)
             for k in adj_matrix[i]:
                 if j in adj_matrix[k].keys():
                     time_delta_ik,bat_delta_ik = arc_lengths_pre(i,k,TWs[i][1],bat_intervals[i][0],TWs[k],bat_intervals[k])
-                    if TWs[i][1]+time_delta_ik+adj_matrix[k][j]+(battery_capacity-(bat_intervals[i][0]+bat_delta_ik))/load_fac <TWs[j][0]:
+                    if TWs[i][1]+time_delta_ik+adj_matrix[k][j]+(battery_capacity-
+                          (bat_intervals[i][0]+bat_delta_ik))/load_fac <TWs[j][0]:
                         toRemove.append(j)
                         #print "Removing arc (%d,%d) because %d can be visited in between at no cost" % (i,j,k)
                         #print "Previous time: %f" % adj_matrix[i][j]
@@ -1504,217 +1550,169 @@ def process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix,deep_check=0)
         for j in toRemove:
             adj_matrix[i].pop(j)
 
-def write_line(filename,filetype,instance_name,data):
+def write_line(filename,instance_name,data):
     file = open(filename, "a")
-    if filetype == "python":
-        
-        file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d],\n" %data)
-    
-    if filetype == "gnuplot":
-        file.write(instance_name + ' '+" %.2E %.2E %d %d %.1f %.1f %d %d %d %d %d %d\n" %data)
+    #file.write("Instance " + instance_name + ":\nSolve_time: %.2f, Nodes explored: %d, Branches: %d, Obj: %.0f\n" %data)
+    file.write(instance_name + "\n%.2f %d %d %.0f\n" %data)
     file.close()
         
 
-dynamic_discovery = 0
-startHeurIter = 0
+
 #1:[[0,18,3,47,5,11,29,48,13,51],[0,32,14,10,26,42,7,36,51],[0,35,50,15,33,45,6,2,51]]
 #2:[[0,2,41,21,9,3,11,12,51],[0,5,19,39,36,34,50,46,51],[0,10,13,15,23,47,28,37,51]]
 #7: [[0,1,32,30,40,5,46,36,39,51],[0,20,4,22,12,50,15,11,51],[0,27,8,43,17,6,42,7,29,51]]
 instance_names = {
-#"SimCologne_C_50_twLength_30_i_1_equalProfits.txt":-22,
+"SimCologne_C_50_twLength_60_i_1_equalProfits.txt":-22,
 #"SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
 #"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
 #"SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
 #"SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
-#"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":24,
+#"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
 #"SimCologne_C_50_twLength_30_i_7_equalProfits.txt":-23,
 #"SimCologne_C_50_twLength_30_i_8_equalProfits.txt":-26,
 #"SimCologne_C_50_twLength_30_i_9_equalProfits.txt":-24,
 #"SimCologne_C_50_twLength_30_i_10_equalProfits.txt":-23,
 #"SimCologne_C_50_twLength_30_i_11_equalProfits.txt":-22,
 #"SimCologne_C_50_twLength_30_i_12_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
 #"SimCologne_C_50_twLength_30_i_14_equalProfits.txt":-24,
 #"SimCologne_C_50_twLength_30_i_15_equalProfits.txt":-21,             
                   }
 
-if dynamic_discovery:
-    saveFileName = "Results_BAT_dyn_disc_"
-else:
-    saveFileName = "Results_BAT_BNT_"
-file = open(saveFileName, "w")
-file.write("{")
-file.close()
-use_best_heuristic = 0
-bat_unit = 2
-load_fac = bat_unit*2.5
-loading_speed = load_fac
-service_time = 5
-
-battery_capacity = bat_unit*120
-speed = 60
-time_horizon = 720
-
-inst_num = 0
-for instance_name in sorted(instance_names.keys()):
-    inst_num += 1
-    vert_num,TWs,adj_matrix,profits,depotDists = readData(instance_name,"BatVRP")
-    depotDists = [0]+depotDists+[0]
-    profits = [0]+profits+[0]
-    vert_num += 1
-    TWs.append([TWs[0][0],TWs[0][1]])
-    TWs[0][1]=0
-    adj_matrix[vert_num-1] = {}
-    for i in range(1,vert_num-1):
-        adj_matrix[i][vert_num-1]=adj_matrix[0][i]-service_time
-    #old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-    
-    for i in  range(vert_num):
-        if adj_matrix[i].has_key(0):
-            adj_matrix[i][vert_num-1]=adj_matrix[i].pop(0)
-        if adj_matrix[i].has_key(i):
-            adj_matrix[i].pop(i)
-    old_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
-    
-    adj_matrix_tr={i:{} for i in adj_matrix}
-    for i in adj_matrix:
-        for j in adj_matrix[i]:
-            adj_matrix_tr[j][i]=adj_matrix[i][j]
-    
-    oldArcAmount=0
-    for i in adj_matrix:
-        oldArcAmount+=len(adj_matrix[i])
-    bat_intervals = [[bat_unit*depotDists[i],battery_capacity-bat_unit*depotDists[i]] for i in adj_matrix]
-    bat_intervals[0]=[battery_capacity,battery_capacity]
-    battery_matrix = {i : { j : -bat_unit*(depotDists[i]+depotDists[j]) for j in adj_matrix} for i in adj_matrix}
-    print "Total number of arcs before preprocessing: %d" % oldArcAmount
-    process_adj_matrix(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-    
-
-    #g=build_precedence_graph(adj_matrix,adj_matrix_tr,TWs,old_adj_matrix)
-    processedArcAmount=0
-    for i in adj_matrix:
-        processedArcAmount+=len(adj_matrix[i])
-    print "Total number of arcs after preprocessing: %d" % processedArcAmount
-    time.sleep(5)
-    print "Starting branch and bound process"
-    
-    #time.sleep(30)
-    #blub-8
-    cycles = []
-    #nodes = [[i,TWs[i][0],TWs[i][1]] for i in range(vert_num)]
-    for i in adj_matrix:
-        for j in adj_matrix[i]:
-            if i in adj_matrix[j].keys() and i<j:
-                cycles.append( (i,j) )
-    #break
-    print str(cycles)
-
-    vrp = VRP(TWs,bat_intervals,adj_matrix,profits,battery_matrix,0,len(TWs)-1,load_fac,battery_capacity)
-    #break
-    #vrp = vrp(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-    #vrp_ub = vrp_ub(TWs,adj_matrix,adj_matrix,0,vert_num-1)
-    #vrp.precedence_graph = g
-    #vrp_ub.precedence_graph = g
-    vrp.old_adj_matrix=old_adj_matrix
-    #vrp.adj_matrix_tr = adj_matrix_tr
-    vrp.update_duals=0
-    vrp.adapt_model=0
-    vrp.testNodeGraph()
-    #time.sleep(3)
-    for i in vrp.nodes:
-        if i.name == 0:
-            continue
-        i.split_node_both(i.tw_interval[0],i.bat_interval[0],0)
-        i.split_node_both(i.tw_interval[1],i.bat_interval[0],0)
-    vrp.update_duals=1
-    vrp.adapt_model=1
-    vrp.create_model()
-    tree = Tree(vrp,0)
-    tree.service_time = service_time
-    tree.use_best_heuristic = use_best_heuristic
-    tree.heuristic_ub = instance_names[instance_name]+1
-    tree.add_all_split_points = 0
-    t0=time.time()
-    infeasible_paths = []
-    for i in vrp.adj_matrix:
-        timeI = TWs[i][0]
-        batI = bat_intervals[i][1]
-        for k in vrp.adj_matrix[i]:
-            time_delta_ik,bat_delta_ik,lt = vrp.calc_deltas(i,k,batI,timeI)
-            for j in vrp.adj_matrix[k]:
-                #print (i,k,j)
-                time_delta_kj,bat_delta_kj,lt = vrp.calc_deltas(k,j,batI+bat_delta_ik,timeI+time_delta_ik)
-                
-                if timeI+time_delta_ik+time_delta_kj>TWs[j][1]+0.0001 or batI+bat_delta_ik+bat_delta_kj< bat_intervals[j][0]-0.0001:
-                    infeasible_paths.append([i,k,j])
-    for P in infeasible_paths:
-        vrp.add_infeasible_path(P)
-    #break
-    #vrp.model.solve()
-    #print(vrp.model.solution.get_objective_value())
-    #blub-8
-    vrp.testNodeGraph()
-    #break
-    for i in adj_matrix:
-        for j in adj_matrix:
-            if i!=j and i not in [0,vert_num-1] and j not in [0,vert_num-1]:
-                if (TWs[i][0]-depotDists[i] +0.0001 >= TWs[j][0]-depotDists[j] and 
-                    TWs[i][1]+depotDists[i] <= TWs[j][1]+depotDists[j]+0.0001 ):
-                    vrp.add_priority_cut(i,j)
-                    #print "%d dominates %d" %(i,j)
-    #break
-
-    for cycle in cycles:
-        vrp.add_ste_cut(cycle)
-    t0 = time.time()
-    tree.branch_and_refine()
-    #tree.dynamic_discovery()
-    t0 = time.time()-t0
-    
-    #break
-    t1=time.time()
-    tree.open_nodes.append(Tree_node(tree,[]))
-    tree.open_nodes[0].solve_lp_relaxation()
-    tree.lb = -50
-    tree.ub = 0
-    tree.branch_and_refine()
-    #tree.dynamic_discovery()
-    print "Original time: " + str(t0)
-    print "CHeated time: " + str(time.time()-t1)
-    break
-    print ("___________________________________________________________\n")
-    print "\n\nTotal time: %f\n\n" %(t1-t0)
-    print "Average lp time: %f" %(sum(tree.lp_times)/len(tree.lp_times))
-    print "Total lp time (includes part of the time of adding cuts/splitting): %f" % sum(tree.lp_times)
-    print "Average simplex iterations: %f" %(sum(tree.simp_iteras)/len(tree.simp_iteras))
-    print "Total number of nodes visited: %d" % tree.count
-    print "Node selection time: %f" % tree.node_selection_time
-    print "Time spend on finding and adding ste cuts: %f" % tree.add_cut_time
-    print "Time spend on splitting nodes: %f" % tree.split_time
-    old_instance_name = instance_name
-    number_of_nodes_in_graph = 0
-    number_of_arcs_in_graph = 0
-    for i in tree.vrp.nodes:
-        number_of_nodes_in_graph += len(i.interval_nodes)
-    for key,extended_arclist in tree.vrp.arc_dict.iteritems():
-        number_of_arcs_in_graph += len(extended_arclist)
-    lineData =( sum(tree.lp_times),
-               (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
-               (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,
-               tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph)
-    if resultfiletype == "python":
-        write_line(saveFileName,resultfiletype,instance_name,lineData)
-    else:
-        write_line(saveFileName,resultfiletype,"%d"%inst_num,lineData)
-    #file = open(saveFileName, "a")
-    #file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d],\n" %( sum(tree.lp_times),
-    #           (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
-    #           (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,
-    #           tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph)
-    #write_line(saveFileName,"python",instance_name,lineData))
-    #file.close()
-if 0:
-    file = open(saveFileName, "a")
-    file.write("}")
-    file.close()
+start_paramsens = [
+#                {"vehicle_amount":3,
+#                "update_duals" : 1,
+#                "multivisit_model" :1,
+#                "add_priority_cuts_at_start":0,
+#                "remove_infeasible_paths_at_start":0,
+#                "remove_cycles_at_start":1,
+#                        },
+#                 {"vehicle_amount":3,
+#                "update_duals" : 1,
+#                "multivisit_model" :1,
+#                "add_priority_cuts_at_start":0,
+#                "remove_infeasible_paths_at_start":1,
+#                "remove_cycles_at_start":1,
+#                        },
+                  {"vehicle_amount":3,
+                "update_duals" : 1,
+                "multivisit_model" :1,
+                "add_priority_cuts_at_start":1,
+                "remove_infeasible_paths_at_start":0,
+                "remove_cycles_at_start":1,
+                        },
+#                  {"vehicle_amount":3,
+#                "update_duals" : 1,
+#                "multivisit_model" :1,
+#                "add_priority_cuts_at_start":1,
+#                "remove_infeasible_paths_at_start":1,
+#                "remove_cycles_at_start":1,
+#                        },
+                ]
+for dynamic_discovery in [0]:
+    for start_params in start_paramsens:
+        startHeurIter = 0
+        cheat = 0
+        if dynamic_discovery:
+            saveFileName = "Results_BAT_dyn_disc"+str(dynamic_discovery)
+        else:
+            saveFileName = "Results_BAT_BNT"+str(cheat)
+        
+        now = datetime.now()
+        start_line = now.strftime("%H:%M:%S\n:"+str(start_params)+"\n")
+        file = open(saveFileName, "a")
+        file.write("\n______________________________________\n")
+        file.write(start_line)
+        file.close()
+        use_best_heuristic = 0
+        bat_unit = 2
+        load_fac = bat_unit*2.5
+        loading_speed = load_fac
+        service_time = 5
+        battery_capacity = bat_unit*120
+        speed = 60
+        time_horizon = 720
+        inst_num = 0
+        
+        calc_cplex_time = 0
+        
+        
+        
+        for instance_name in sorted(instance_names.keys()):
+            
+            function_times = {}
+            function_calls = {}
+            function_times = {'branch':0.0,'solve_model':0.0,'choose_node':0}
+            function_calls = {'branch':0,'solve_model':0,'choose_node':0}
+            error_messsages = []
+            inst_num += 1
+            
+            vert_num,TWs,adj_matrix,profits,depotDists = readData(instance_name,"BatVRP")
+            
+            full_adj_matrix = {i:{j:val for j,val in adj_matrix[i].iteritems()} for i in adj_matrix}
+            
+            bat_intervals = [[bat_unit*depotDists[i],battery_capacity-bat_unit*depotDists[i]] for i in adj_matrix]
+            bat_intervals[0]=[battery_capacity,battery_capacity]
+            battery_matrix = {i : { j : -bat_unit*(depotDists[i]+depotDists[j]) for j in adj_matrix} for i in adj_matrix}
+            
+            process_adj_matrix(adj_matrix,TWs)
+            
+            
+            #break
+            vrp = VRP(TWs,bat_intervals,full_adj_matrix,adj_matrix,profits,battery_matrix,0,len(TWs)-1,load_fac,battery_capacity,start_params)
+            vrp.full_adj_matrix=full_adj_matrix
+            vrp.update_duals=0
+            vrp.adapt_model=0
+            #time.sleep(3)
+            for i in vrp.nodes:
+                if i.name == 0:
+                    continue
+                i.split_node_both(i.tw_interval[0],i.bat_interval[0],0)
+                i.split_node_both(i.tw_interval[1],i.bat_interval[0],0)
+            vrp.update_duals=1
+            vrp.adapt_model=1
+            vrp.create_model()
+            tree = Tree(vrp,0)
+            tree.service_time = service_time
+            tree.use_best_heuristic = use_best_heuristic
+            tree.heuristic_ub = instance_names[instance_name]
+            tree.time_limit = 3600
+            if use_best_heuristic:
+                tree.ub = instance_names[instance_name]
+            if dynamic_discovery==0:
+                tree.branch_and_refine()
+            if dynamic_discovery==1:
+                tree.dynamic_discovery()
+            if dynamic_discovery==2:
+                tree.dynamic_discovery_cplex()
+            if cheat:
+                function_times = {'branch':0.0}
+                function_calls = {'branch':0}
+                error_messsages = []
+                if use_best_heuristic:
+                    tree.ub = instance_names[instance_name]
+                else:
+                    tree.ub = 0
+                tree.lb=-51
+                vrp.create_model()
+                tree.open_nodes=[Tree_node(tree,[])]
+                tree.open_nodes[0].solve_lp_relaxation()
+                tree.branch_and_refine()
+                vrp.create_model('B')
+            if calc_cplex_time:
+                t0 = time.time()
+                vrp.model.solve()
+                cplex_time = time.time()-t0
+            print str(function_times)
+            print str(function_calls)
+        
+            lineData = (function_times['solve_model'], function_calls['choose_node'], function_calls['branch'],tree.ub)
+            write_line(saveFileName,instance_name,lineData)
+            file = open(saveFileName, "a")
+            if calc_cplex_time:
+                file.write(" %.2f\n" % cplex_time)
+            file.close()
+        file = open(saveFileName, "a")
+        file.write("______________________________________\n")
+        file.close()
+        #break
