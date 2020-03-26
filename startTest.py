@@ -16,7 +16,6 @@ b=[random.randint(180,185) for j in range(zahl+z2)]
 c=[-1 for i in range(zahl)]
 
 model = cplex.Cplex()
-
 for i,row in enumerate(A[0]):
     model.variables.add(names=["x%d"%i],obj=[c[i]],lb=[0.0],ub=[1.0],types=['B'])
 

@@ -136,6 +136,7 @@ def ub_arc_length(time,battery_level,head_tw,head_bw,tr_time,bat_delta1,bat_delt
     return time_delta,bat_delta,load_time
 
 
+
 class flowGraphNode():
     def __init__(self):
         self.inflow = 0.0
@@ -309,6 +310,7 @@ class VRP():
         y_names = ["y_%d_%d_%.3f_%.3f_%.3f_%.3f" % (arc.tail.name,arc.head.name,
                                            arc.tail.id_ub[0],arc.tail.id_ub[1],arc.head.id_ub[0],arc.head.id_ub[1])
                         for key,arc_list in self.o_arc_dict.items() for arc in arc_list]
+
         
         self.ub_add_variables(x_names,[var_type]*len(x_names),x_obj,[0.0]*len(x_names),[1.0]*len(x_names),'x')
         self.ub_x_num=len(x_names)
@@ -405,8 +407,8 @@ class VRP():
         
         self.model = cplex.Cplex()
         model = self.model
-        model.set_results_stream(None)
-        model.set_log_stream(None)
+        #model.set_results_stream(None)
+        #model.set_log_stream(None)
         model.parameters.advance.set(1)
         model.set_warning_stream(None)
         x_names = ["x_%d_%d" %(i,j) for i in self.indices for j in self.adj_matrix[i]]
@@ -1325,6 +1327,7 @@ class Battery_node():
         return node.bat_interval[0]+shift_bat > self.bat_interval[0]-tol
     def is_reachable_from_ub(self,node,shift_bat,tol=0.001):
         return node.bat_interval[1]+shift_bat > self.bat_interval[0]+tol-2*tol*self.is_lb
+
     def is_bat_lb(self,tol=0.001):
         return self.is_lb
     def is_bat_ub(self,tol=0.001):
@@ -1352,6 +1355,10 @@ class Tree_node():
         self.branch_lin_exprs = [branch.lin_expr for branch in self.branches]
         self.branch_senses = [branch.sense for branch in self.branches]
         self.branch_rhs = [branch.rhs for branch in self.branches]
+        self.branch_ubs = [(branch.var,0) for branch in self.branches if abs(branch.rhs) < 0.001]
+        self.branch_lbs = [(branch.var,1) for branch in self.branches if abs(branch.rhs-1) < 0.001]
+        self.restore_ubs = [(branch.var,1) for branch in self.branches if abs(branch.rhs) < 0.001]
+        self.restore_lbs = [(branch.var,0) for branch in self.branches if abs(branch.rhs) < 0.001]
         self.dual_values_model = dual_values_model
         self.dual_values_branches = dual_values_branches
         self.primal_values = primal_values
@@ -1379,18 +1386,31 @@ class Tree_node():
         vrp = self.tree.vrp
         model = vrp.model
         oldLen = len(self.branches)
-        
-        model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,senses = self.branch_senses,rhs = self.branch_rhs)
-        if self.tree.vrp.update_duals and self.dual_values_model != 0:
-            model.parameters.advance.set(1)
-            model.start.set_start(col_status=[],row_status=[],
-                                  row_dual=self.dual_values_model+self.dual_values_branches,col_primal=[],row_primal=[],col_dual=[])
-            feas = vrp.solve_model()
-            #raw_input()
+        if 0:
+            model.linear_constraints.add(names = self.branch_names,lin_expr = self.branch_lin_exprs,senses = self.branch_senses,rhs = self.branch_rhs)
+            if self.tree.vrp.update_duals and self.dual_values_model != 0:
+                model.parameters.advance.set(1)
+                model.start.set_start(col_status=[],row_status=[],
+                                      row_dual=self.dual_values_model+self.dual_values_branches,col_primal=[],row_primal=[],col_dual=[])
+                feas = vrp.solve_model()
+                #raw_input()
+            else:
+                #raw_input()
+                feas = vrp.solve_model()
         else:
-            #raw_input()
-            feas = vrp.solve_model()
-        
+            if len(self.branch_lbs)>0:
+                model.variables.set_lower_bounds(self.branch_lbs)
+            if len(self.branch_ubs)>0:  
+                model.variables.set_upper_bounds(self.branch_ubs)
+            if self.tree.vrp.update_duals and self.dual_values_model != 0:
+                model.parameters.advance.set(1)
+                model.start.set_start(col_status=[],row_status=[],
+                                      row_dual=self.dual_values_model,col_primal=[],row_primal=[],col_dual=[])
+                feas = vrp.solve_model()
+                    #raw_input()
+            else:
+                #raw_input()
+                feas = vrp.solve_model()
         #model.parameters.preprocessing.presolve.set(0)
         
         self.updated_lp_relaxation = 1
@@ -1487,7 +1507,7 @@ class Branch():
         self.name= var + str(rhs)
         self.sense = sense
         self.rhs = rhs
-        self.lin_expr = cplex.SparsePair([var],[1])  
+        self.lin_expr = cplex.SparsePair([var],[1])
     def __repr__(self):
         return self.var +" sense: " +(self.sense)
     def __str__(self):
@@ -1910,20 +1930,37 @@ def write_line(filename,instance_name,data):
 #7: [[0,1,32,30,40,5,46,36,39,51],[0,20,4,22,12,50,15,11,51],[0,27,8,43,17,6,42,7,29,51]]
 instance_names = {
 "SimCologne_C_50_twLength_30_i_1_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
-"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
-"SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_7_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_8_equalProfits.txt":-26,
-"SimCologne_C_50_twLength_30_i_9_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_10_equalProfits.txt":-23,
-"SimCologne_C_50_twLength_30_i_11_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_12_equalProfits.txt":-22,
-"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_14_equalProfits.txt":-24,
-"SimCologne_C_50_twLength_30_i_15_equalProfits.txt":-21,             
+#"SimCologne_C_50_twLength_30_i_2_equalProfits.txt":-21,
+#"SimCologne_C_50_twLength_30_i_3_equalProfits.txt":-26,
+#"SimCologne_C_50_twLength_30_i_4_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_5_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_6_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_7_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_8_equalProfits.txt":-26,
+#"SimCologne_C_50_twLength_30_i_9_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_10_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_30_i_11_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_30_i_12_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_30_i_13_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_14_equalProfits.txt":-24,
+#"SimCologne_C_50_twLength_30_i_15_equalProfits.txt":-21,             
+                  }
+instance_names = {
+#"SimCologne_C_50_twLength_60_i_1_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_2_equalProfits.txt":-22,
+#"SimCologne_C_50_twLength_60_i_3_equalProfits.txt":-27,
+#"SimCologne_C_50_twLength_60_i_4_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_5_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_6_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_7_equalProfits.txt":-24,
+"SimCologne_C_50_twLength_60_i_8_equalProfits.txt":-27,
+#"SimCologne_C_50_twLength_60_i_9_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_10_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_11_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_12_equalProfits.txt":-23,
+#"SimCologne_C_50_twLength_60_i_13_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_14_equalProfits.txt":-25,
+#"SimCologne_C_50_twLength_60_i_15_equalProfits.txt":-22,             
                   }
 instance_names = {
 "SimCologne_C_50_twLength_60_i_1_equalProfits.txt":-23,
@@ -2001,7 +2038,6 @@ for dynamic_discovery in [0]:
         calc_cplex_time = 0
         
         for instance_name in sorted(instance_names.keys()):
-            #input()
             function_times = {}
             function_calls = {}
             function_times = {'branch':0.0,'solve_model':0.0,'choose_node':0}

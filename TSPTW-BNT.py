@@ -4,6 +4,7 @@ import numpy
 import time
 import sys
 import networkx as nx
+import os
 
 def solToComponents(solutionStringList,depot=0):
     arcList=[]
@@ -23,6 +24,45 @@ def solToComponents(solutionStringList,depot=0):
         while len(popIndices)>0:
             arcList.pop(popIndices.pop(-1))
     return S
+
+#works only for integer
+def solToCycles(solutionStringList,depot=0):
+    arcList=[]
+    for string in solutionStringList:
+        arcList.append([int(re.split("[_]",string)[1]),int(re.split("[_]",string)[2])])
+    #notS = range(1,n)
+    S = [[depot]]
+    oS= []
+    while len(arcList)>0:
+        popIndices=[]
+        for i in range(len(arcList)):
+            if arcList[i][0]== S[len(S)-1][-1]:
+                S[len(S)-1].append(arcList[i][1])
+                popIndices.append(i)
+        if len(popIndices)== 0:
+            if len(S[-1]) == 1:
+                S.pop(-1)
+                break
+            S.append([depot])
+            #break
+        while len(popIndices)>0:
+            arcList.pop(popIndices.pop(-1))
+    if len(arcList)>0:
+        oS.append(arcList.pop(0))
+        while len(arcList)>0:
+            popIndices=[]
+            for i in range(len(arcList)):
+                if arcList[i][0] == oS[len(oS)-1][-1]:
+                    oS[len(oS)-1].append(arcList[i][1])
+                    popIndices.append(i)
+            if len(popIndices)== 0:
+                if len(arcList) > 0:
+                    oS.append([arcList.pop(0)])
+                #break
+            while len(popIndices)>0:
+                arcList.pop(popIndices.pop(-1))
+        
+    return S,oS
 
 def readData(file_name,directory_name ="AFG"):
     
@@ -175,7 +215,7 @@ class Tsp():
         self.model.linear_constraints.add(names=all_names,lin_expr = allvars, 
                                                      senses = allsenses, rhs = allrhs)
         self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
-        self.const_num += len(allvars)
+        self.const_num += len(all_names)
     def add_variables(self,all_names,all_types,all_obj,all_lb,all_ub,var_type):
         old_inds=self.model.variables.get_num()
         self.model.variables.add(names = all_names,
@@ -458,7 +498,7 @@ class Tsp_ub():
         self.model.linear_constraints.add(names=all_names,lin_expr = allvars, 
                                                      senses = allsenses, rhs = allrhs)
         self.const_name2idx.update({name:old_inds+j for j,name in enumerate(all_names)})
-        self.const_num += len(allvars)
+        self.const_num += len(all_names)
     def add_variables(self,all_names,all_types,all_obj,all_lb,all_ub,var_type):
         old_inds=self.model.variables.get_num()
         self.model.variables.add(names = all_names,
@@ -494,7 +534,7 @@ class Tsp_ub():
             if len(S) != self.n:
                 print "Adding STE cut for set: " + str(S)
                 self.add_ste_cut(S)
-                self.solve_model()
+                self.solve_model(branches)
         return primal_feasible
     def add_ste_cut(self,notS):
         in_arc_list = []
@@ -587,7 +627,7 @@ class Tsp_node():
         self.interval_nodes.insert(idx+1,Interval_node(self.name,[split_point,old_ub],self,self.interval_nodes[idx].is_ub,0))
         self.interval_nodes[idx].is_ub=0
         self.interval_nodes[idx].interval[1] = split_point
-        
+
         #print self.interval_nodes[idx].id
         #print split_point
         #add variable for new node
@@ -1023,6 +1063,8 @@ class Tree_node():
         if len (scores)>0:
             self.tree.psi_avg = sum(scores)/len(scores)
         #self.tree.branch_variable_selection_time += time.time()-t0
+        if chosen_var == -1:
+            print "Error"
         return chosen_var, chosen_val
     def calc_score(self,var_name):
         branch_history = self.tree.branch_history
@@ -1387,7 +1429,7 @@ class Tree():
         self.root = Tree_node(self,[])
         self.open_nodes = [self.root]
         self.branch_history = {key:[] for key in tsp.x_names}
-        self.time_limit = 18000
+        self.time_limit = 7200
         self.cutFinder = cutFinder(self.tsp)
         self.count = 0
         self.root_count = 0
@@ -1816,18 +1858,19 @@ class Tree():
                 
                 
                 #segment if no cut was added
-                if len(node.fractionals) == 0 and node.lower_bound < self.ub-0.99:
-                    print "Integer feasible tour without cycle found, objective: %f" % node.lower_bound
-                    self.ub = node.lower_bound
-                    self.solution_node = node
-                    pop_indices=[]
-                    #pruning of tree
-                    for i,node2 in enumerate(self.open_nodes):
-                        if not node2.feasible or node2.lower_bound >= self.ub-0.99:
-                            pop_indices.append(i)
-                    while (len(pop_indices)>0):
-                        delme = self.open_nodes.pop(pop_indices.pop(-1))
-                        del delme
+                if len(node.fractionals) == 0:
+                    if node.lower_bound < self.ub-0.99:
+                        print "Integer feasible tour without cycle found, objective: %f" % node.lower_bound
+                        self.ub = node.lower_bound
+                        self.solution_node = node
+                        pop_indices=[]
+                        #pruning of tree
+                        for i,node2 in enumerate(self.open_nodes):
+                            if not node2.feasible or node2.lower_bound >= self.ub-0.99:
+                                pop_indices.append(i)
+                        while (len(pop_indices)>0):
+                            delme = self.open_nodes.pop(pop_indices.pop(-1))
+                            del delme
                 else:
                     self.node_count += 1
                     #branching step
@@ -2116,17 +2159,56 @@ def adjust_TWs(adj_matrix,adj_matrix_tr,TWs):
             if retval:
                 TWs_changed=1
 
-  
+def write_line(filename,filetype,instance_name,data):
+    file = open(filename, "a")
+    if filetype == "python":
+        
+        file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d],\n" %data)
+    
+    if filetype == "gnuplot":
+        file.write(instance_name + ' '+" %.2E %.2E %d %d %.1f %.1f %d %d %d %d %d %d\n" %data)
+    file.close()
+        
+
+"""
+DUMAS:
+{"n100w20.001.txt":100000,	"n150w60.004.txt":100000,	"n20w60.002.txt":100000,	"n40w60.005.txt":100000,	"n60w80.003.txt":100000,
+"n100w20.002.txt":100000,	"n150w60.005.txt":100000,	"n20w60.003.txt":100000,	"n40w80.001.txt":100000,	"n60w80.004.txt":100000,
+"n100w20.003.txt":100000,	"n200w20.001.txt":100000,	"n20w60.004.txt":100000,	"n40w80.002.txt":100000,	"n60w80.005.txt":100000,
+"n100w20.004.txt":100000,	"n200w20.002.txt":100000,	"n20w60.005.txt":100000,	"n40w80.003.txt":100000,	"n80w20.001.txt":100000,
+"n100w20.005.txt":100000,	"n200w20.003.txt":100000,	"n20w80.001.txt":100000,	"n40w80.004.txt":100000,	"n80w20.002.txt":100000,
+"n100w40.001.txt":100000,	"n200w20.004.txt":100000,	"n20w80.002.txt":100000,	"n40w80.005.txt":100000,	"n80w20.003.txt":100000,
+"n100w40.002.txt":100000,	"n200w20.005.txt":100000,	"n20w80.003.txt":100000,	"n60w100.001.txt":100000,	"n80w20.004.txt":100000,
+"n100w40.003.txt":100000,	"n200w40.001.txt":100000,	"n20w80.004.txt":100000,	"n60w100.002.txt":100000,	"n80w20.005.txt":100000,
+"n100w40.004.txt":100000,	"n200w40.002.txt":100000,	"n20w80.005.txt":100000,	"n60w100.003.txt":100000,	"n80w40.001.txt":100000,
+"n100w40.005.txt":100000,	"n200w40.003.txt":100000,	"n40w100.001.txt":100000,	"n60w100.004.txt":100000,	"n80w40.002.txt":100000,
+"n100w60.001.txt":100000,	"n200w40.004.txt":100000,	"n40w100.002.txt":100000,	"n60w100.005.txt":100000,	"n80w40.003.txt":100000,
+"n100w60.002.txt":100000,	"n200w40.005.txt":100000,	"n40w100.003.txt":100000,	"n60w20.001.txt":100000,	"n80w40.004.txt":100000,
+"n100w60.003.txt":100000,	"n20w100.001.txt":100000,	"n40w100.004.txt":100000,	"n60w20.002.txt":100000,	"n80w40.005.txt":100000,
+"n100w60.004.txt":100000,	"n20w100.002.txt":100000,	"n40w100.005.txt":100000,	"n60w20.003.txt":100000,	"n80w60.001.txt":100000,
+"n100w60.005.txt":100000,	"n20w100.003.txt":100000,	"n40w20.001.txt":100000,	"n60w20.004.txt":100000,	"n80w60.002.txt":100000,
+"n150w20.001.txt":100000,	"n20w100.004.txt":100000,	"n40w20.002.txt":100000,	"n60w20.005.txt":100000,	"n80w60.003.txt":100000,
+"n150w20.002.txt":100000,	"n20w100.005.txt":100000,	"n40w20.003.txt":100000,	"n60w40.001.txt":100000,	"n80w60.004.txt":100000,
+"n150w20.003.txt":100000,	"n20w20.001.txt":100000,	"n40w20.004.txt":100000,	"n60w40.002.txt":100000,	"n80w60.005.txt":100000,
+"n150w20.004.txt":100000,	"n20w20.002.txt":100000,	"n40w20.005.txt":100000,	"n60w40.003.txt":100000,	"n80w80.001.txt":100000,
+"n150w20.005.txt":100000,	"n20w20.003.txt":100000,	"n40w40.001.txt":100000,	"n60w40.004.txt":100000,	"n80w80.002.txt":100000,
+"n150w40.001.txt":100000,	"n20w20.004.txt":100000,	"n40w40.002.txt":100000,	"n60w40.005.txt":100000,	"n80w80.003.txt":100000,
+"n150w40.002.txt":100000,	"n20w20.005.txt":100000,	"n40w40.003.txt":100000,	"n60w60.001.txt":100000,	"n80w80.004.txt":100000,
+"n150w40.003.txt":100000,	"n20w40.001.txt":100000,	"n40w40.004.txt":100000,	"n60w60.002.txt":100000,	"n80w80.005.txt":100000,
+"n150w40.004.txt":100000,	"n20w40.002.txt":100000,	"n40w40.005.txt":100000,	"n60w60.003.txt":100000,	
+"n150w40.005.txt":100000,	"n20w40.003.txt":100000,	"n40w60.001.txt":100000,	"n60w60.004.txt":100000,
+"n150w60.001.txt":100000,	"n20w40.004.txt":100000,	"n40w60.002.txt":100000,	"n60w60.005.txt":100000,
+"n150w60.002.txt":100000,	"n20w40.005.txt":100000,	"n40w60.003.txt":100000,	"n60w80.001.txt":100000,
+"n150w60.003.txt":100000,	"n20w60.001.txt":100000,	"n40w60.004.txt":100000,	"n60w80.002.txt":100000}
+"""
 
 #"""
 #instance_name = "n150w60.001.txt"
 #vert_num,TWs,adj_matrix,service_time = readData(instance_name,"Dumas")
 dynamic_discovery = int(sys.argv[1])
 startHeurIter = int(sys.argv[2])
-if dynamic_discovery:
-    saveFileName = "Results_dyn_disc"
-else:
-    saveFileName = "Results_BNT"
+    
+    
 instance_names_full = [
 "rbg010a.tw",	"rbg020a.tw",	"rbg027a.tw",	"rbg048a.tw",	"rbg132.2.tw",
 "rbg016a.tw",	"rbg021.2.tw",	"rbg031a.tw",	"rbg049a.tw",	"rbg132.tw",
@@ -2140,16 +2222,19 @@ instance_names_full = [
 "rbg019d.tw",	"rbg021.tw",	"rbg042a.tw",	"rbg125a.tw",	"rbg233.tw"
 ]
 hard_instance_names ={
-"rbg048a.tw":9383,	"rbg132.2.tw":8200,
-"rbg049a.tw":10018,	"rbg132.tw":8470,
-"rbg152.3.tw":9797,
-	"rbg050b.tw":9863,	"rbg152.tw":10032,
-	"rbg050c.tw":10024,	"rbg172a.tw":10961,
-	"rbg193.2.tw":12167,
-	"rbg193.tw":12547,
-"rbg086a.tw":8400,	"rbg201a.tw":12967,
-"rbg041a.tw":2598,	"rbg092a.tw":7160,	"rbg233.2.tw":14549,
-"rbg042a.tw":2772,	"rbg233.tw":15031 
+#"rbg048a.tw":9383,	#"rbg132.2.tw":8200,
+#"rbg049a.tw":10018,	
+"rbg132.tw":8470,
+#"rbg152.3.tw":9797,
+	#"rbg050b.tw":9863,	
+    "rbg152.tw":10032,
+	#"rbg050c.tw":10024,#	"rbg172a.tw":10961,
+#	"rbg193.2.tw":12167,
+	#"rbg193.tw":12547,
+#"rbg086a.tw":8400,#	"rbg201a.tw":12967,
+#"rbg041a.tw":2598,	
+"rbg092a.tw":7160,#	"rbg233.2.tw":14549,
+#"rbg042a.tw":2772,#	"rbg233.tw":15031 
 }
 easy_instance_names = {
 "rbg010a.tw":671,	"rbg020a.tw":4689,	"rbg027a.tw":5091,	
@@ -2164,18 +2249,124 @@ easy_instance_names = {
 "rbg019d.tw":1356,	"rbg021.tw":4536,
 "rbg050a.tw":2953 , "rbg055a.tw": 3761, "rbg067a.tw": 4625,#"rbg125a.tw":7936
 }
+easy_instance_names = {
+#"rbg010a.tw":671,	#"rbg020a.tw":4689,	
+#"rbg027a.tw":5091,	
+#"rbg016a.tw":938,#	"rbg021.2.tw":4528,	"rbg031a.tw":1863,	
+#"rbg016b.tw":1304,#	"rbg021.3.tw":4528,	"rbg033a.tw":2069,	
+#"rbg017.2.tw":852,#	"rbg021.4.tw":4525,	
+#"rbg034a.tw":2222,	
+#"rbg017.tw":893,	#"rbg021.5.tw":4515,	
+#"rbg035a.2.tw":2056,
+#"rbg017a.tw":4296,#	"rbg021.6.tw":4480,	"rbg035a.tw":2144,	
+#"rbg019a.tw":1262,#	"rbg021.7.tw":4479,	
+#"rbg038a.tw":2480,
+#"rbg019b.tw":1866,#	"rbg021.8.tw":4478,	
+#"rbg040a.tw":2378,	
+#"rbg019c.tw":4536,#	"rbg021.9.tw":4478,
+#"rbg019d.tw":1356,#	"rbg021.tw":4536,
+"rbg050a.tw":2953 ,# "rbg055a.tw": 3761, "rbg067a.tw": 4625,#"rbg125a.tw":7936
+}
+"""
+easy_instance_names ={     "n20w60.002.txt":100000,	
+                       "n40w60.005.txt":100000,	#"n60w80.003.txt":100000,
+		"n20w60.003.txt":100000,	"n40w80.001.txt":100000,#	"n60w80.004.txt":100000,
+		"n20w60.004.txt":100000,	"n40w80.002.txt":100000,	#"n60w80.005.txt":100000,
+	"n20w60.005.txt":100000,	"n40w80.003.txt":100000,	#"n80w20.001.txt":100000,
+	"n20w80.001.txt":100000,	"n40w80.004.txt":100000,	#"n80w20.002.txt":100000,
+		"n20w80.002.txt":100000,	"n40w80.005.txt":100000,#	"n80w20.003.txt":100000,
+		"n20w80.003.txt":100000,	"n60w100.001.txt":100000,#	"n80w20.004.txt":100000,
+		"n20w80.004.txt":100000,	"n60w100.002.txt":100000,#	"n80w20.005.txt":100000,
+		"n20w80.005.txt":100000,	"n60w100.003.txt":100000,#	"n80w40.001.txt":100000,
+		"n40w100.001.txt":100000,	"n60w100.004.txt":100000,	#"n80w40.002.txt":100000,
+	"n40w100.002.txt":100000,	"n60w100.005.txt":100000,	"n80w40.003.txt":100000,
+	"n40w100.003.txt":100000,	"n60w20.001.txt":100000,	"n80w40.004.txt":100000,
+	"n20w100.001.txt":100000,	"n40w100.004.txt":100000,	"n60w20.002.txt":100000,	#"n80w40.005.txt":100000,
+	"n20w100.002.txt":100000,	"n40w100.005.txt":100000,	"n60w20.003.txt":100000,	#"n80w60.001.txt":100000,
+	"n20w100.003.txt":100000,	"n40w20.001.txt":100000,	"n60w20.004.txt":100000,	#"n80w60.002.txt":100000,
+	"n20w100.004.txt":100000,	"n40w20.002.txt":100000,	"n60w20.005.txt":100000,	#"n80w60.003.txt":100000,
+	"n20w100.005.txt":100000,	"n40w20.003.txt":100000,	"n60w40.001.txt":100000,	#"n80w60.004.txt":100000,
+	"n20w20.001.txt":100000,	"n40w20.004.txt":100000,	"n60w40.002.txt":100000,	#"n80w60.005.txt":100000,
+	"n20w20.002.txt":100000,	"n40w20.005.txt":100000,	"n60w40.003.txt":100000,	#"n80w80.001.txt":100000,
+	"n20w20.003.txt":100000,	"n40w40.001.txt":100000,	"n60w40.004.txt":100000,	#"n80w80.002.txt":100000,
+	"n20w20.004.txt":100000,	"n40w40.002.txt":100000,	"n60w40.005.txt":100000,	#"n80w80.003.txt":100000,
+	"n20w20.005.txt":100000,	"n40w40.003.txt":100000,	"n60w60.001.txt":100000,	#"n80w80.004.txt":100000,
+	"n20w40.001.txt":100000,	"n40w40.004.txt":100000,	"n60w60.002.txt":100000,	#"n80w80.005.txt":100000,
+"n20w40.002.txt":100000,	"n40w40.005.txt":100000,	"n60w60.003.txt":100000,	
+	"n20w40.003.txt":100000,	"n40w60.001.txt":100000,	"n60w60.004.txt":100000,
+	"n20w40.004.txt":100000,	"n40w60.002.txt":100000,	"n60w60.005.txt":100000,
+	"n20w40.005.txt":100000,	"n40w60.003.txt":100000,	"n60w80.001.txt":100000,
+	"n20w60.001.txt":100000,	"n40w60.004.txt":100000,	"n60w80.002.txt":100000
+    }
+
+easy_instance_names = {"n100w20.001.txt":100000,	"n150w60.004.txt":100000,	"n20w60.002.txt":100000,	"n40w60.005.txt":100000,	"n60w80.003.txt":100000,
+"n100w20.002.txt":100000,	"n150w60.005.txt":100000,	"n20w60.003.txt":100000,	"n40w80.001.txt":100000,	"n60w80.004.txt":100000,
+"n100w20.003.txt":100000,	"n200w20.001.txt":100000,	"n20w60.004.txt":100000,	"n40w80.002.txt":100000,	"n60w80.005.txt":100000,
+"n100w20.004.txt":100000,	"n200w20.002.txt":100000,	"n20w60.005.txt":100000,	"n40w80.003.txt":100000,	"n80w20.001.txt":100000,
+"n100w20.005.txt":100000,	"n200w20.003.txt":100000,	"n20w80.001.txt":100000,	"n40w80.004.txt":100000,	"n80w20.002.txt":100000,
+"n100w40.001.txt":100000,	"n200w20.004.txt":100000,	"n20w80.002.txt":100000,	"n40w80.005.txt":100000,	"n80w20.003.txt":100000,
+"n100w40.002.txt":100000,	"n200w20.005.txt":100000,	"n20w80.003.txt":100000,	"n60w100.001.txt":100000,	"n80w20.004.txt":100000,
+"n100w40.003.txt":100000,	"n200w40.001.txt":100000,	"n20w80.004.txt":100000,	"n60w100.002.txt":100000,	"n80w20.005.txt":100000,
+"n100w40.004.txt":100000,	"n200w40.002.txt":100000,	"n20w80.005.txt":100000,	"n60w100.003.txt":100000,	"n80w40.001.txt":100000,
+"n100w40.005.txt":100000,	"n200w40.003.txt":100000,	"n40w100.001.txt":100000,	"n60w100.004.txt":100000,	"n80w40.002.txt":100000,
+"n100w60.001.txt":100000,	"n200w40.004.txt":100000,	"n40w100.002.txt":100000,	"n60w100.005.txt":100000,	"n80w40.003.txt":100000,
+"n100w60.002.txt":100000,	"n200w40.005.txt":100000,	"n40w100.003.txt":100000,	"n60w20.001.txt":100000,	"n80w40.004.txt":100000,
+"n100w60.003.txt":100000,	"n20w100.001.txt":100000,	"n40w100.004.txt":100000,	"n60w20.002.txt":100000,	"n80w40.005.txt":100000,
+"n100w60.004.txt":100000,	"n20w100.002.txt":100000,	"n40w100.005.txt":100000,	"n60w20.003.txt":100000,	"n80w60.001.txt":100000,
+"n100w60.005.txt":100000,	"n20w100.003.txt":100000,	"n40w20.001.txt":100000,	"n60w20.004.txt":100000,	"n80w60.002.txt":100000,
+"n150w20.001.txt":100000,	"n20w100.004.txt":100000,	"n40w20.002.txt":100000,	"n60w20.005.txt":100000,	"n80w60.003.txt":100000,
+"n150w20.002.txt":100000,	"n20w100.005.txt":100000,	"n40w20.003.txt":100000,	"n60w40.001.txt":100000,	"n80w60.004.txt":100000,
+"n150w20.003.txt":100000,	"n20w20.001.txt":100000,	"n40w20.004.txt":100000,	"n60w40.002.txt":100000,	"n80w60.005.txt":100000,
+"n150w20.004.txt":100000,	"n20w20.002.txt":100000,	"n40w20.005.txt":100000,	"n60w40.003.txt":100000,	"n80w80.001.txt":100000,
+"n150w20.005.txt":100000,	"n20w20.003.txt":100000,	"n40w40.001.txt":100000,	"n60w40.004.txt":100000,	"n80w80.002.txt":100000,
+"n150w40.001.txt":100000,	"n20w20.004.txt":100000,	"n40w40.002.txt":100000,	"n60w40.005.txt":100000,	"n80w80.003.txt":100000,
+"n150w40.002.txt":100000,	"n20w20.005.txt":100000,	"n40w40.003.txt":100000,	"n60w60.001.txt":100000,	"n80w80.004.txt":100000,
+"n150w40.003.txt":100000,	"n20w40.001.txt":100000,	"n40w40.004.txt":100000,	"n60w60.002.txt":100000,	"n80w80.005.txt":100000,
+"n150w40.004.txt":100000,	"n20w40.002.txt":100000,	"n40w40.005.txt":100000,	"n60w60.003.txt":100000,	
+"n150w40.005.txt":100000,	"n20w40.003.txt":100000,	"n40w60.001.txt":100000,	"n60w60.004.txt":100000,
+"n150w60.001.txt":100000,	"n20w40.004.txt":100000,	"n40w60.002.txt":100000,	"n60w60.005.txt":100000,
+"n150w60.002.txt":100000,	"n20w40.005.txt":100000,	"n40w60.003.txt":100000,	"n60w80.001.txt":100000,
+"n150w60.003.txt":100000,	"n20w60.001.txt":100000,	"n40w60.004.txt":100000,	"n60w80.002.txt":100000}
+"""
 instance_choice = sys.argv[3]
 if instance_choice == "easy":
     instance_names = easy_instance_names
 else:
     instance_names = hard_instance_names
 #instance_names = {"rbg034a.tw":2222,}
-saveFileName = saveFileName+instance_choice
-file = open(saveFileName, "w")
-file.write("{")
-file.close()
+
+resultfiletype = "gnuplot"
+
+
+
+if resultfiletype == "python":
+    if dynamic_discovery:
+        saveFileName = "Results_dyn_disc_AFG_"
+        saveFileName = saveFileName+instance_choice
+    else:
+        saveFileName = "Results_BNT_AFG_"
+        saveFileName += "%d_" % startHeurIter
+        saveFileName = saveFileName+instance_choice
+    file = open(saveFileName, "w")
+    file.write("{")
+    file.close()
+if resultfiletype == "gnuplot":
+    if dynamic_discovery:
+        saveFileName = os.path.expanduser('~/plot-scripts/branch-and-refine-tsptw/Results_dyn_disc_AFG_')
+        saveFileName = saveFileName+instance_choice
+    else:
+        saveFileName = os.path.expanduser( "~/plot-scripts/branch-and-refine-tsptw/Results_BNT_AFG_")
+        saveFileName += "%d_" % startHeurIter
+        saveFileName = saveFileName+instance_choice
+    file = open(saveFileName, "w")
+    #file.write("\n\n")
+    file.close()
 use_best_heuristic = int(sys.argv[4])
-for instance_name in instance_names:
+
+
+inst_num = 0
+for instance_name in sorted(instance_names.keys()):
+    inst_num += 1
     if "old_instance_name" not in locals() or instance_name != old_instance_name or 1:
         vert_num,TWs,adj_matrix,service_time = readData(instance_name,"AFG")
         #print adj_matrix[28][1]
@@ -2234,6 +2425,7 @@ for instance_name in instance_names:
         for i in adj_matrix:
             processedArcAmount+=len(adj_matrix[i])
         print "Total number of arcs after preprocessing: %d" % processedArcAmount
+        continue
         #time.sleep(3)
         print "Starting branch and bound process"
         #time.sleep(30)
@@ -2269,7 +2461,9 @@ for instance_name in instance_names:
     tree.heuristic_ub = instance_names[instance_name]+1
     tree.add_all_split_points = 0
     t0=time.time()
-    
+    tsp.model.solve()
+    #print(tsp.model.solution.get_objective_value())
+    #blub-8
     if dynamic_discovery:
         tree.dynamic_discovery()
     else:
@@ -2293,11 +2487,22 @@ for instance_name in instance_names:
         number_of_nodes_in_graph += len(i.interval_nodes)
     for key,extended_arclist in tree.tsp.arc_dict.iteritems():
         number_of_arcs_in_graph += len(extended_arclist)
-    file = open(saveFileName, "a")
-    file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d]," %(sum(tree.lp_times),
+    lineData =( sum(tree.lp_times),
                (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
-               (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph))
+               (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,
+               tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph)
+    if resultfiletype == "python":
+        write_line(saveFileName,resultfiletype,instance_name,lineData)
+    else:
+        write_line(saveFileName,resultfiletype,"%d"%inst_num,lineData)
+    #file = open(saveFileName, "a")
+    #file.write('"'+instance_name + '"'+":[%.2f,%.2f,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d],\n" %( sum(tree.lp_times),
+    #           (sum(tree.lp_times)/len(tree.lp_times)),tree.count,tree.root_count,tree.ub,tree.lb,
+    #           (sum(tree.simp_iteras)/len(tree.simp_iteras)),tree.cut_count,
+    #           tree.refinement_count,tree.node_count,number_of_nodes_in_graph,number_of_arcs_in_graph)
+    #write_line(saveFileName,"python",instance_name,lineData))
+    #file.close()
+if resultfiletype == "python":
+    file = open(saveFileName, "a")
+    file.write("}")
     file.close()
-file = open(saveFileName, "a")
-file.write("}")
-file.close()
